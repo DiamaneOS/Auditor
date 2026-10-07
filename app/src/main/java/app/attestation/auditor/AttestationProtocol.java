@@ -240,6 +240,11 @@ class AttestationProtocol {
     private static final byte AUDITOR_APP_VARIANT_RELEASE = 0;
     private static final byte AUDITOR_APP_VARIANT_PLAY = 1;
     private static final byte AUDITOR_APP_VARIANT_DEBUG = 2;
+    // DiamaneOS: release Auditees signed by GrapheneOS (GrapheneOS phones) are trusted too, as
+    // their own variant, so a pairing keeps the signer it started with.
+    private static final String AUDITOR_APP_SIGNATURE_DIGEST_RELEASE_GRAPHENEOS =
+            "990E04F0864B19F14F84E0E432F7A393F297AB105A22C1E1B10B442A4A62C42C";
+    private static final byte AUDITOR_APP_VARIANT_RELEASE_GRAPHENEOS = 3;
 
     private static final int AUDITOR_APP_MINIMUM_VERSION = 89;
     private static final int OS_VERSION_MINIMUM = 140000;
@@ -564,10 +569,13 @@ class AttestationProtocol {
         final byte appVariant;
         final String packageName = info.packageName;
         if (AUDITOR_APP_PACKAGE_NAME_RELEASE.equals(packageName)) {
-            if (!AUDITOR_APP_SIGNATURE_DIGEST_RELEASE.equals(signatureDigest)) {
+            if (AUDITOR_APP_SIGNATURE_DIGEST_RELEASE.equals(signatureDigest)) {
+                appVariant = AUDITOR_APP_VARIANT_RELEASE;
+            } else if (AUDITOR_APP_SIGNATURE_DIGEST_RELEASE_GRAPHENEOS.equals(signatureDigest)) {
+                appVariant = AUDITOR_APP_VARIANT_RELEASE_GRAPHENEOS;
+            } else {
                 throw new GeneralSecurityException("invalid Auditor app signing key");
             }
-            appVariant = AUDITOR_APP_VARIANT_RELEASE;
         } else if (AUDITOR_APP_PACKAGE_NAME_PLAY.equals(packageName)) {
             if (!AUDITOR_APP_SIGNATURE_DIGEST_PLAY.equals(signatureDigest)) {
                 throw new GeneralSecurityException("invalid Auditor app signing key");
@@ -984,6 +992,10 @@ class AttestationProtocol {
             if (verified.appVariant < pinnedAppVariant) {
                 throw new GeneralSecurityException("App version downgraded");
             }
+            if ((verified.appVariant == AUDITOR_APP_VARIANT_RELEASE_GRAPHENEOS)
+                    != (pinnedAppVariant == AUDITOR_APP_VARIANT_RELEASE_GRAPHENEOS)) {
+                throw new GeneralSecurityException("Auditor app signer changed");
+            }
             if (verified.securityLevel != preferences.getInt(KEY_PINNED_SECURITY_LEVEL,
                     ParsedAttestationRecord.securityLevelToInt(ParsedAttestationRecord.SecurityLevel.TRUSTED_ENVIRONMENT))) {
                 throw new GeneralSecurityException("Security level mismatch");
@@ -1048,6 +1060,8 @@ class AttestationProtocol {
         final String appVariant;
         if (verified.appVariant == AUDITOR_APP_VARIANT_RELEASE) {
             appVariant = context.getString(R.string.auditor_app_variant_release);
+        } else if (verified.appVariant == AUDITOR_APP_VARIANT_RELEASE_GRAPHENEOS) {
+            appVariant = context.getString(R.string.auditor_app_variant_release_grapheneos);
         } else if (verified.appVariant == AUDITOR_APP_VARIANT_PLAY) {
             appVariant = context.getString(R.string.auditor_app_variant_play);
         } else {

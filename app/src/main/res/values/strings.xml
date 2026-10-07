@@ -74,6 +74,7 @@
     <string name="auditor_app_version">Pinned Auditor app version: %d\n</string>
     <string name="auditor_app_variant">Pinned Auditor app variant: %s\n</string>
     <string name="auditor_app_variant_release">Release build signed by DiamaneOS</string>
+    <string name="auditor_app_variant_release_grapheneos">Release build signed by GrapheneOS</string>
     <string name="auditor_app_variant_play">Release build signed by Play Store</string>
     <string name="auditor_app_variant_debug">Debug build signed by GrapheneOS</string>
     <string name="user_profile_secure">User profile secure: %s\n</string>
