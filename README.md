@@ -5,7 +5,8 @@ Differences from upstream:
 
 - Fairphone 6 support. It has no StrongBox, so its pairings use the TEE with a pairing-specific
   attest key.
-- Release Auditees must be signed with the DiamaneOS Auditor key.
-- Remote verification and sample submission use attestation.diamaneos.de.
+- Release Auditees signed with the DiamaneOS Auditor key or GrapheneOS's are trusted; a pairing
+  keeps the signer it started with.
+- Remote verification uses attestation.diamaneos.de. No sample submission.
 
 Upstream overview: https://attestation.app/about.
