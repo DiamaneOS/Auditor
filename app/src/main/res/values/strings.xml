@@ -20,12 +20,10 @@
     <string name="action_clear_auditor">Clear Auditor pairings</string>
     <string name="action_enable_remote_verify">Enable remote verification</string>
     <string name="action_disable_remote_verify">Disable remote verification</string>
-    <string name="action_submit_sample">Submit sample data</string>
     <string name="action_help">Help</string>
 
     <string name="enable_remote_verify_success">Scheduled regular remote verification</string>
     <string name="disable_remote_verify_success">Disabled remote verification</string>
-    <string name="schedule_submit_sample_success">Scheduled submitting sample data</string>
     <string name="clear_auditee_pairings_success">Cleared Auditee pairings</string>
     <string name="clear_auditee_pairings_failure">Failed to fully clear Auditee pairings</string>
     <string name="clear_auditor_pairings_success">Cleared Auditor pairings</string>
@@ -41,12 +39,6 @@
     <string name="remote_verification_notification_failure_channel">Remote verification failure</string>
     <string name="remote_verification_notification_failure_title">Remote verification failure</string>
     <string name="remote_verification_notification_failure_content">Failed to submit remote attestation.</string>
-
-    <string name="sample_submission_notification_channel">Sample submission</string>
-    <string name="sample_submission_notification_title">Submitted sample data</string>
-    <string name="sample_submission_notification_content">Successfully submitted sample data.</string>
-    <string name="sample_submission_notification_title_failure">Failed submitting sample data</string>
-    <string name="sample_submission_notification_content_failure">Failed to submit sample data.</string>
 
     <string name="scanner_label">Scan QR code shown on the other device.</string>
     <string name="verifying_attestation">Verifying attestation…</string>

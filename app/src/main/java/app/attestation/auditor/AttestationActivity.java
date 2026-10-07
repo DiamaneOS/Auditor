@@ -69,7 +69,6 @@ public class AttestationActivity extends AppCompatActivity {
 
     private static final int PERMISSIONS_REQUEST_CAMERA = 0;
     private static final int PERMISSIONS_REQUEST_POST_NOTIFICATIONS_REMOTE_VERIFY = 1;
-    private static final int PERMISSIONS_REQUEST_POST_NOTIFICATIONS_SUBMIT_SAMPLE = 2;
 
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
 
@@ -451,9 +450,6 @@ public class AttestationActivity extends AppCompatActivity {
             }
         } else if (requestCode == PERMISSIONS_REQUEST_POST_NOTIFICATIONS_REMOTE_VERIFY) {
             launchQrScannerActivity();
-        } else if (requestCode == PERMISSIONS_REQUEST_POST_NOTIFICATIONS_SUBMIT_SAMPLE) {
-            SubmitSampleJob.schedule(this);
-            snackbar.setText(R.string.schedule_submit_sample_success).show();
         }
     }
 
@@ -474,7 +470,6 @@ public class AttestationActivity extends AppCompatActivity {
     public boolean onCreateOptionsMenu(final Menu menu) {
         getMenuInflater().inflate(R.menu.menu_attestation, menu);
         menu.findItem(R.id.action_clear_auditee).setEnabled(isSupportedAuditee);
-        menu.findItem(R.id.action_submit_sample).setEnabled(!BuildConfig.DEBUG);
         return true;
     }
 
@@ -482,8 +477,6 @@ public class AttestationActivity extends AppCompatActivity {
     public boolean onPrepareOptionsMenu(final Menu menu) {
         final boolean isRemoteVerifyEnabled = RemoteVerifyJob.isEnabled(this);
         menu.findItem(R.id.action_disable_remote_verify).setEnabled(isRemoteVerifyEnabled);
-        menu.findItem(R.id.action_submit_sample).setEnabled(!BuildConfig.DEBUG &&
-                !SubmitSampleJob.isScheduled(this));
         return true;
     }
 
@@ -550,15 +543,6 @@ public class AttestationActivity extends AppCompatActivity {
                     })
                     .setNegativeButton(R.string.cancel, null)
                     .show();
-            return true;
-        } else if (itemId == R.id.action_submit_sample) {
-            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
-                        PERMISSIONS_REQUEST_POST_NOTIFICATIONS_SUBMIT_SAMPLE);
-            } else {
-                SubmitSampleJob.schedule(this);
-                snackbar.setText(R.string.schedule_submit_sample_success).show();
-            }
             return true;
         } else if (itemId == R.id.action_help) {
             startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(TUTORIAL_URL)));
