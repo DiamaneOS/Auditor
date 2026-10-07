@@ -73,7 +73,7 @@
     <string name="os_enforced">\n<b>Information provided by the verified OS:</b>\n\n</string>
     <string name="auditor_app_version">Pinned Auditor app version: %d\n</string>
     <string name="auditor_app_variant">Pinned Auditor app variant: %s\n</string>
-    <string name="auditor_app_variant_release">Release build signed by GrapheneOS</string>
+    <string name="auditor_app_variant_release">Release build signed by DiamaneOS</string>
     <string name="auditor_app_variant_play">Release build signed by Play Store</string>
     <string name="auditor_app_variant_debug">Debug build signed by GrapheneOS</string>
     <string name="user_profile_secure">User profile secure: %s\n</string>
@@ -137,7 +137,9 @@
     <string name="device_pixel_10_pro_xl">Google Pixel 10 Pro XL</string>
     <string name="device_pixel_10_pro_fold">Google Pixel 10 Pro Fold</string>
     <string name="device_pixel_10a">Google Pixel 10a</string>
+    <string name="device_fairphone_6">Fairphone 6</string>
 
     <string name="os_stock">Stock</string>
     <string name="os_graphene">GrapheneOS</string>
+    <string name="os_diamaneos">DiamaneOS</string>
 </resources>

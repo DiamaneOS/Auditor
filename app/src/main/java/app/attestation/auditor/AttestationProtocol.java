@@ -230,8 +230,9 @@ class AttestationProtocol {
     private static final String AUDITOR_APP_PACKAGE_NAME_RELEASE = "app.attestation.auditor";
     private static final String AUDITOR_APP_PACKAGE_NAME_PLAY = "app.attestation.auditor.play";
     private static final String AUDITOR_APP_PACKAGE_NAME_DEBUG = "app.attestation.auditor.debug";
-    private static final String AUDITOR_APP_SIGNATURE_DIGEST_RELEASE =
-            "990E04F0864B19F14F84E0E432F7A393F297AB105A22C1E1B10B442A4A62C42C";
+    // DiamaneOS: SHA-256 of the DiamaneOS Auditor signing certificate, set at the key ceremony.
+    // The empty value never matches, so release Auditees are rejected until then.
+    private static final String AUDITOR_APP_SIGNATURE_DIGEST_RELEASE = "";
     private static final String AUDITOR_APP_SIGNATURE_DIGEST_PLAY =
             "075335BD7B54C965222B5284D2A1FDEF1198AE45EC7B09A4934287A0E3A243C7";
     private static final String AUDITOR_APP_SIGNATURE_DIGEST_DEBUG =
@@ -256,6 +257,11 @@ class AttestationProtocol {
 
         boolean hasPogoPins() {
             return name == R.string.device_pixel_tablet;
+        }
+
+        // DiamaneOS: the Fairphone 6 has no StrongBox, so its pairings use the TEE
+        boolean hasStrongBox() {
+            return name != R.string.device_fairphone_6;
         }
     }
 
@@ -304,6 +310,11 @@ class AttestationProtocol {
                     new DeviceInfo(R.string.device_pixel_10_pro_fold, 300, 300, false, R.string.os_graphene))
             .put("D8F879D10419EDDC9FCDA6280718BE763F6BF12299E1F72DF3EA8AD8A8EB7F80",
                     new DeviceInfo(R.string.device_pixel_10a, 300, 300, false, R.string.os_graphene))
+            // DiamaneOS (TEE only)
+            // Fairphone 6: SHA-256 of the DiamaneOS AVB public key (avbtool extract_public_key
+            // output), added at the key ceremony. No entry until then.
+            // .put("<SHA-256>",
+            //         new DeviceInfo(R.string.device_fairphone_6, 300, 300, false, R.string.os_diamaneos))
             .build();
     private static final ImmutableMap<String, DeviceInfo> fingerprintsStock = ImmutableMap
             .<String, DeviceInfo>builder()
@@ -349,6 +360,9 @@ class AttestationProtocol {
                     new DeviceInfo(R.string.device_pixel_10_pro_fold, 300, 300, false, R.string.os_stock))
             .put("E354CD6BBB15D64B2E95B2F79E9DF6CE22B8A5D0D66CFB70330D6A1BCD7212A0",
                     new DeviceInfo(R.string.device_pixel_10a, 300, 300, false, R.string.os_stock))
+            // DiamaneOS: Fairphone 6 stock OS (TEE only), top-level vbmeta key of FP6 16.111.0
+            .put("C8677EB0A60727BCCB4AB2BB9B7B156A94A7B729E4720FA21194122E39248177",
+                    new DeviceInfo(R.string.device_fairphone_6, 300, 300, false, R.string.os_stock))
             .build();
 
     private static final ImmutableMap<String, DeviceInfo> fingerprintsStrongBoxNonStock = ImmutableMap
@@ -525,10 +539,6 @@ class AttestationProtocol {
         if (attestation.keymasterSecurityLevel != attestationSecurityLevelEnum) {
             throw new GeneralSecurityException("keymaster security level does not match attestation security level");
         }
-        // enforce StrongBox for new pairings
-        if (!hasPersistentKey && attestationSecurityLevelEnum != ParsedAttestationRecord.SecurityLevel.STRONG_BOX) {
-            throw new GeneralSecurityException("new pairing without StrongBox security level");
-        }
 
         // prevent replay attacks
         if (!Arrays.equals(attestation.attestationChallenge, challenge)) {
@@ -610,6 +620,12 @@ class AttestationProtocol {
 
         if (device == null) {
             throw new GeneralSecurityException("invalid verified boot key fingerprint: " + verifiedBootKey);
+        }
+
+        // enforce StrongBox for new pairings with devices supporting it
+        if (!hasPersistentKey && device.hasStrongBox() &&
+                attestationSecurityLevelEnum != ParsedAttestationRecord.SecurityLevel.STRONG_BOX) {
+            throw new GeneralSecurityException("new pairing without StrongBox security level");
         }
 
         // OS version sanity checks
@@ -1388,7 +1404,8 @@ class AttestationProtocol {
             }
         } else {
             attestationKeystoreAlias = persistentKeystoreAlias;
-            useStrongBox = true;
+            // DiamaneOS: TEE on devices without StrongBox (Fairphone 6)
+            useStrongBox = pm.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE);
             useAttestKey = canUseAttestKey;
 
             if (useAttestKey) {

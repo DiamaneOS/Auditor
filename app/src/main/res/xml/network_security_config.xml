@@ -2,7 +2,7 @@
 <network-security-config>
     <base-config cleartextTrafficPermitted="false"/>
     <domain-config>
-        <domain includeSubdomains="true">attestation.app</domain>
+        <domain includeSubdomains="true">attestation.diamaneos.de</domain>
         <!-- no expiry since the app is expected to be kept relatively up-to-date to use the services -->
         <pin-set>
             <!-- ISRG Root X1 -->
@@ -17,11 +17,7 @@
             <!-- ISRG Root YR -->
             <pin digest="SHA-256">fk6IOKit1ild5647BH06ujSIq5XbCgqlbYl6ANhhi88=</pin>
 
-            <!-- ECDSA secp256r1 backup key -->
-            <pin digest="SHA-256">q3TMLLQkHOLGnFXKL1RytMd1Vr906gdK/ymgcBnk144=</pin>
-
-            <!-- ECDSA secp384r1 backup key -->
-            <pin digest="SHA-256">x3i8R25x59RNyo1LAunh4lGFvnIYXT5oTq2dOVgxTWU=</pin>
+            <!-- DiamaneOS: backup key pins (SPKI SHA-256), added when the server keys exist -->
         </pin-set>
     </domain-config>
 </network-security-config>
