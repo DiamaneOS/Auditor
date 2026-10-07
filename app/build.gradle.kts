@@ -48,8 +48,10 @@ android {
         applicationId = "de.diamaneos.auditor"
         minSdk = 33
         targetSdk = 36
-        versionCode = 92
-        versionName = versionCode.toString()
+        // DiamaneOS: upstream version x 100 + DiamaneOS revision (92.1 = 9201). Always higher than
+        // upstream's own numbers and only ever rising, as pairings refuse a lower version.
+        versionCode = 9202
+        versionName = "92.2"
     }
 
     buildTypes {
