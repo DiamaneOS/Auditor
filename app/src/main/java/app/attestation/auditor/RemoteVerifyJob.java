@@ -150,22 +150,28 @@ public class RemoteVerifyJob extends JobService {
             HttpsURLConnection connection = null;
             String exceptionMessage = null;
             try {
-                connection = (HttpsURLConnection) new URL(CHALLENGE_URL).openConnection();
-                connection.setSSLSocketFactory(tlsSocketFactory);
-                connection.setConnectTimeout(CONNECT_TIMEOUT);
-                connection.setReadTimeout(READ_TIMEOUT);
-                connection.setRequestMethod("POST");
-
-                final DataInputStream input = new DataInputStream(connection.getInputStream());
-                final byte[] challengeMessage = new byte[AttestationProtocol.CHALLENGE_MESSAGE_LENGTH];
-                input.readFully(challengeMessage);
-                input.close();
-
                 final SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
                 final long userId = preferences.getLong(KEY_USER_ID, -1);
                 if (userId == -1) {
                     throw new IOException("missing userId");
                 }
+
+                connection = (HttpsURLConnection) new URL(CHALLENGE_URL).openConnection();
+                connection.setSSLSocketFactory(tlsSocketFactory);
+                connection.setConnectTimeout(CONNECT_TIMEOUT);
+                connection.setReadTimeout(READ_TIMEOUT);
+                connection.setRequestMethod("POST");
+                // DiamaneOS: binds the challenge of an initial pairing to the account
+                final String pendingSubscribeKey = preferences.getString(KEY_SUBSCRIBE_KEY, null);
+                if (pendingSubscribeKey != null) {
+                    connection.setRequestProperty("Authorization",
+                            "Auditor " + userId + " " + pendingSubscribeKey);
+                }
+
+                final DataInputStream input = new DataInputStream(connection.getInputStream());
+                final byte[] challengeMessage = new byte[AttestationProtocol.CHALLENGE_MESSAGE_LENGTH];
+                input.readFully(challengeMessage);
+                input.close();
 
                 final AttestationResult result = AttestationProtocol.generateSerialized(
                         context, challengeMessage, Long.toString(userId), STATE_PREFIX);

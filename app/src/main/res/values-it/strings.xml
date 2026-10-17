@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile2_confirm_title">Conferma come è stato configurato questo telefono</string>
+    <string name="profile2_confirm_text">L\'hardware di questo telefono non può dimostrare ad Auditor che il telefono è autentico. Ogni controllo successivo viene verificato dal suo hardware sicuro rispetto a questo primo accoppiamento. Continua solo se ti fidi del modo in cui è stato configurato questo telefono. Dopo un ripristino dei dati di fabbrica, il telefono dovrà essere accoppiato di nuovo.</string>
+    <string name="pair">Accoppia</string>
+    <string name="first_pairing_not_verified">Primo accoppiamento non verificato dall\'hardware</string>
+    <string name="flagged_for_review">Segnalato per la verifica: %s\n</string>
+    <string name="enable_remote_verify_link_confirm">Questo link chiede ad Auditor di inviare controlli periodici da questo telefono all\'account numero %1$s su attestation.diamaneos.de. Continua solo se hai toccato \"Add this phone\" in quell\'account.</string>
+    <string name="remote_verify_already_enabled">La verifica remota è già attiva. Disattivala prima dal menu per inviare i controlli a un altro account.</string>
+</resources>

@@ -6,6 +6,7 @@ import static android.graphics.Color.WHITE;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -13,6 +14,7 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.text.Html;
 import android.text.Spanned;
 import android.util.Log;
@@ -32,6 +34,9 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
+import androidx.lifecycle.MutableLiveData;
+import androidx.lifecycle.ViewModel;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.preference.PreferenceManager;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
@@ -63,12 +68,20 @@ public class AttestationActivity extends AppCompatActivity {
     private static final String STATE_AUDITEE_PAIRING = "auditee_pairing";
     private static final String STATE_AUDITEE_SERIALIZED_ATTESTATION = "auditee_serialized_attestation";
     private static final String STATE_AUDITOR_CHALLENGE = "auditor_challenge";
+    private static final String STATE_AUDITOR_CHALLENGE_TIME = "auditor_challenge_time";
     private static final String STATE_STAGE = "stage";
     private static final String STATE_OUTPUT = "output";
     private static final String STATE_BACKGROUND_RESOURCE = "background_resource";
 
     private static final int PERMISSIONS_REQUEST_CAMERA = 0;
     private static final int PERMISSIONS_REQUEST_POST_NOTIFICATIONS_REMOTE_VERIFY = 1;
+    private static final int PERMISSIONS_REQUEST_POST_NOTIFICATIONS_LINK = 2;
+
+    // DiamaneOS: remote enrollment from the account page and from the Setup Wizard
+    static final String ACTION_ADD_THIS_PHONE = "de.diamaneos.auditor.action.ADD_THIS_PHONE";
+    private static final String ENROLL_SCHEME = "diamaneos-auditor";
+    private static final String ENROLL_HOST = "enroll";
+    private static final String ADD_THIS_PHONE_URL = "https://" + RemoteVerifyJob.DOMAIN + "/#add-this-phone";
 
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
 
@@ -89,6 +102,8 @@ public class AttestationActivity extends AppCompatActivity {
     private boolean auditeePairing;
     private byte[] auditeeSerializedAttestation;
     private byte[] auditorChallenge;
+    private long auditorChallengeTime;
+    private VerificationState verification;
     private int backgroundResource;
 
     final ActivityResultLauncher<Intent> QRScannerActivityLauncher = registerForActivityResult(
@@ -116,26 +131,7 @@ public class AttestationActivity extends AppCompatActivity {
                             handleAttestation(contentsBytes);
                         } else if (stage == Stage.EnableRemoteVerify) {
                             stage = Stage.None;
-                            final String[] values = contents.split(" ");
-                            if (values.length < 4 || !RemoteVerifyJob.DOMAIN.equals(values[0])) {
-                                snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
-                                return;
-                            }
-                            final long userId;
-                            final int interval;
-                            try {
-                                userId = Long.parseLong(values[1]);
-                                interval = Integer.parseInt(values[3]);
-                            } catch (final NumberFormatException e) {
-                                snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
-                                return;
-                            }
-                            PreferenceManager.getDefaultSharedPreferences(this).edit()
-                                    .putLong(RemoteVerifyJob.KEY_USER_ID, userId)
-                                    .putString(RemoteVerifyJob.KEY_SUBSCRIBE_KEY, values[2])
-                                    .apply();
-                            RemoteVerifyJob.schedule(this, interval);
-                            snackbar.setText(R.string.enable_remote_verify_success).show();
+                            enableRemoteVerify(contents, false);
                         } else {
                             throw new RuntimeException("received unexpected scan result");
                         }
@@ -222,6 +218,7 @@ public class AttestationActivity extends AppCompatActivity {
             auditeePairing = savedInstanceState.getBoolean(STATE_AUDITEE_PAIRING);
             auditeeSerializedAttestation = savedInstanceState.getByteArray(STATE_AUDITEE_SERIALIZED_ATTESTATION);
             auditorChallenge = savedInstanceState.getByteArray(STATE_AUDITOR_CHALLENGE);
+            auditorChallengeTime = savedInstanceState.getLong(STATE_AUDITOR_CHALLENGE_TIME);
             stage = Stage.valueOf(savedInstanceState.getString(STATE_STAGE));
             binding.content.textview.setText(Html.fromHtml(savedInstanceState.getString(STATE_OUTPUT),
                     Html.FROM_HTML_MODE_LEGACY));
@@ -251,6 +248,7 @@ public class AttestationActivity extends AppCompatActivity {
             public void handleOnBackPressed() {
                 if (stage == Stage.AuditeeResults || stage == Stage.Auditor ||
                         stage == Stage.Result) {
+                    verification.outcome.setValue(null);
                     auditeeSerializedAttestation = null;
                     auditorChallenge = null;
                     stage = Stage.None;
@@ -264,6 +262,126 @@ public class AttestationActivity extends AppCompatActivity {
         });
 
         RemoteVerifyJob.restore(this);
+
+        verification = new ViewModelProvider(this).get(VerificationState.class);
+        verification.outcome.observe(this, this::showOutcome);
+
+        if (savedInstanceState == null) {
+            handleEnrollmentIntent(getIntent());
+        }
+    }
+
+    // an open Auditor receives a later link here instead of in onCreate
+    @Override
+    protected void onNewIntent(@NonNull final Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleEnrollmentIntent(intent);
+    }
+
+    private void handleEnrollmentIntent(final Intent intent) {
+        if (ACTION_ADD_THIS_PHONE.equals(intent.getAction())) {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(ADD_THIS_PHONE_URL))
+                    .addCategory(Intent.CATEGORY_BROWSABLE));
+            finish();
+        } else if (Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null
+                && ENROLL_SCHEME.equals(intent.getData().getScheme())
+                && ENROLL_HOST.equals(intent.getData().getHost())) {
+            final String account = intent.getData().getQueryParameter("account");
+            if (account == null) {
+                snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
+            } else {
+                enableRemoteVerify(account, true);
+            }
+        }
+    }
+
+    // Any app can send the enrollment link, so it is confirmed first. A device without a
+    // manufacturer-rooted chain also needs the user to confirm how it was set up.
+    private void enableRemoteVerify(final String contents, final boolean fromLink) {
+        if (!isSupportedAuditee) {
+            snackbar.setText(R.string.unsupported_auditee).show();
+            return;
+        }
+        // as upstream hides the button, the account can only change after disabling
+        if (RemoteVerifyJob.isEnabled(this)) {
+            new MaterialAlertDialogBuilder(this)
+                    .setMessage(R.string.remote_verify_already_enabled)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
+            return;
+        }
+        final String[] values = contents.split(" ");
+        if (values.length < 4 || !RemoteVerifyJob.DOMAIN.equals(values[0])) {
+            snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
+            return;
+        }
+        final long userId;
+        final int interval;
+        try {
+            userId = Long.parseLong(values[1]);
+            interval = Integer.parseInt(values[3]);
+        } catch (final NumberFormatException e) {
+            snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
+            return;
+        }
+        final Runnable enable = () -> {
+            PreferenceManager.getDefaultSharedPreferences(this).edit()
+                    .putLong(RemoteVerifyJob.KEY_USER_ID, userId)
+                    .putString(RemoteVerifyJob.KEY_SUBSCRIBE_KEY, values[2])
+                    .apply();
+            RemoteVerifyJob.schedule(this, interval);
+            binding.content.remoteVerify.setVisibility(View.GONE);
+            snackbar.setText(R.string.enable_remote_verify_success).show();
+            if (fromLink && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                        PERMISSIONS_REQUEST_POST_NOTIFICATIONS_LINK);
+            }
+        };
+        final Context context = getApplicationContext();
+        final Runnable checkSetup = () -> executor.submit(() -> {
+            try {
+                AttestationProtocol.clearAuditee(RemoteVerifyJob.STATE_PREFIX);
+            } catch (final GeneralSecurityException | IOException e) {
+                Log.e(TAG, "clearAuditee", e);
+            }
+            final boolean manufacturerRooted = AttestationProtocol.hasManufacturerRootedAttestation(context);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
+                if (manufacturerRooted) {
+                    enable.run();
+                } else {
+                    confirmSetup(enable, null);
+                }
+            });
+        });
+        if (fromLink) {
+            new MaterialAlertDialogBuilder(this)
+                    .setTitle(R.string.action_enable_remote_verify)
+                    .setMessage(getString(R.string.enable_remote_verify_link_confirm, Long.toString(userId)))
+                    .setPositiveButton(android.R.string.ok, (dialog, which) -> checkSetup.run())
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+        } else {
+            checkSetup.run();
+        }
+    }
+
+    private void confirmSetup(final Runnable pair, final Runnable cancel) {
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.profile2_confirm_title)
+                .setMessage(R.string.profile2_confirm_text)
+                .setPositiveButton(R.string.pair, (dialog, which) -> pair.run())
+                .setNegativeButton(android.R.string.cancel, (dialog, which) -> {
+                    if (cancel != null) {
+                        cancel.run();
+                    }
+                })
+                .setCancelable(false)
+                .show();
     }
 
     @Override
@@ -291,6 +409,7 @@ public class AttestationActivity extends AppCompatActivity {
         savedInstanceState.putBoolean(STATE_AUDITEE_PAIRING, auditeePairing);
         savedInstanceState.putByteArray(STATE_AUDITEE_SERIALIZED_ATTESTATION, auditeeSerializedAttestation);
         savedInstanceState.putByteArray(STATE_AUDITOR_CHALLENGE, auditorChallenge);
+        savedInstanceState.putLong(STATE_AUDITOR_CHALLENGE_TIME, auditorChallengeTime);
         savedInstanceState.putString(STATE_STAGE, stage.name());
         savedInstanceState.putString(STATE_OUTPUT, Html.toHtml((Spanned) binding.content.textview.getText(),
                 Html.TO_HTML_PARAGRAPH_LINES_CONSECUTIVE));
@@ -327,6 +446,7 @@ public class AttestationActivity extends AppCompatActivity {
     private void runAuditor() {
         if (auditorChallenge == null) {
             auditorChallenge = AttestationProtocol.getChallengeMessage(this);
+            auditorChallengeTime = SystemClock.elapsedRealtime();
         }
         binding.content.textview.setText(R.string.qr_code_scan_hint_auditor);
         chooseBestLayout(auditorChallenge);
@@ -334,32 +454,61 @@ public class AttestationActivity extends AppCompatActivity {
     }
 
     private void handleAttestation(final byte[] serialized) {
+        handleAttestation(serialized, SystemClock.elapsedRealtime() - auditorChallengeTime, false);
+    }
+
+    private void handleAttestation(final byte[] serialized, final long challengeAgeMs,
+            final boolean profile2Confirmed) {
         binding.content.textview.setText(R.string.verifying_attestation);
+        final MutableLiveData<Object> outcome = verification.outcome;
+        final byte[] challenge = auditorChallenge;
+        final Context context = getApplicationContext();
         executor.submit(() -> {
             try {
-                final AttestationProtocol.VerificationResult result = AttestationProtocol.verifySerialized(this, serialized, auditorChallenge);
-                runOnUiThread(() -> {
-                    setBackgroundResource(result.strong() ? R.color.green : R.color.orange);
-                    binding.content.textview.setText(result.strong() ? R.string.verify_strong : R.string.verify_basic);
-                    binding.content.textview.append(getText(R.string.hardware_enforced));
-                    binding.content.textview.append(result.teeEnforced());
-                    binding.content.textview.append(getText(R.string.os_enforced));
-                    binding.content.textview.append(result.osEnforced());
-                    if (!result.history().isEmpty()) {
-                        binding.content.textview.append(getText(R.string.history));
-                        binding.content.textview.append(result.history());
-                    }
-                });
+                final AttestationProtocol.VerificationResult result = AttestationProtocol.verifySerialized(
+                        context, serialized, challenge, challengeAgeMs, profile2Confirmed);
+                outcome.postValue(result.needsConfirmation()
+                        ? new Confirmation(serialized, challengeAgeMs) : result);
             } catch (final BufferUnderflowException | DataFormatException |
                     GeneralSecurityException | NegativeArraySizeException e) {
                 Log.e(TAG, "attestation verification error", e);
-                runOnUiThread(() -> {
-                    setBackgroundResource(R.color.red);
-                    binding.content.textview.setText(R.string.verify_error);
-                    binding.content.textview.append(e.getMessage());
-                });
+                outcome.postValue(e);
             }
         });
+    }
+
+    // DiamaneOS: results outlive a rotation, so the screen never stays on "Verifying".
+    public static class VerificationState extends ViewModel {
+        final MutableLiveData<Object> outcome = new MutableLiveData<>();
+    }
+
+    private record Confirmation(byte[] serialized, long challengeAgeMs) {}
+
+    private void showOutcome(final Object outcome) {
+        if (outcome instanceof Confirmation confirmation) {
+            confirmSetup(() -> {
+                verification.outcome.setValue(null);
+                handleAttestation(confirmation.serialized(), confirmation.challengeAgeMs(), true);
+            }, () -> {
+                verification.outcome.setValue(null);
+                getOnBackPressedDispatcher().onBackPressed();
+            });
+        } else if (outcome instanceof AttestationProtocol.VerificationResult result) {
+            setBackgroundResource(result.strong() ? R.color.green : R.color.orange);
+            binding.content.textview.setText(result.strong() ? R.string.verify_strong : R.string.verify_basic);
+            binding.content.textview.append(getText(R.string.hardware_enforced));
+            binding.content.textview.append(result.teeEnforced());
+            binding.content.textview.append(getText(R.string.os_enforced));
+            binding.content.textview.append(result.osEnforced());
+            if (!result.history().isEmpty()) {
+                binding.content.textview.append(getText(R.string.history));
+                binding.content.textview.append(result.history());
+            }
+        } else if (outcome instanceof Exception e) {
+            setBackgroundResource(R.color.red);
+            binding.content.textview.setText(R.string.verify_error);
+            binding.content.textview.append(e.getMessage());
+        }
     }
 
     private void generateAttestation(final byte[] challenge) {
