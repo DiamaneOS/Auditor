@@ -27,6 +27,16 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="diamaneos-auditor" android:host="enroll" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="de.diamaneos.auditor.action.ADD_THIS_PHONE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
         <activity android:name=".QRScannerActivity" />
 

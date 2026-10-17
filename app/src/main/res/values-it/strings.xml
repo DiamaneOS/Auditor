@@ -5,4 +5,5 @@
     <string name="pair">Accoppia</string>
     <string name="first_pairing_not_verified">Primo accoppiamento non verificato dall\'hardware</string>
     <string name="flagged_for_review">Segnalato per la verifica: %s\n</string>
+    <string name="enable_remote_verify_link_confirm">Questo link chiede ad Auditor di inviare controlli periodici da questo telefono a un account su attestation.diamaneos.de. Continua solo se hai toccato \"Add this phone\" nel tuo account.</string>
 </resources>

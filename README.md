@@ -11,6 +11,7 @@ Differences from upstream:
 - Device specifics and trusted keys are in `app/src/main/res/raw/diamaneos_trust.json`.
 - Release Auditees signed with the DiamaneOS Auditor key or GrapheneOS's are trusted. A pairing
   keeps the signer it started with.
-- Remote verification uses attestation.diamaneos.de. No sample submission.
+- Remote verification uses attestation.diamaneos.de, whose account page can add the phone directly.
+  No sample submission.
 
 Upstream overview: https://attestation.app/about.

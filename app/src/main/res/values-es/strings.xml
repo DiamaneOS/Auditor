@@ -5,4 +5,5 @@
     <string name="pair">Vincular</string>
     <string name="first_pairing_not_verified">Primera vinculación no verificada por hardware</string>
     <string name="flagged_for_review">Marcado para revisión: %s\n</string>
+    <string name="enable_remote_verify_link_confirm">Este enlace pide a Auditor que envíe comprobaciones periódicas desde este teléfono a una cuenta de attestation.diamaneos.de. Continúa solo si tocaste «Add this phone» en tu propia cuenta.</string>
 </resources>

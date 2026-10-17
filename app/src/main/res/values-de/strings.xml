@@ -5,4 +5,5 @@
     <string name="pair">Koppeln</string>
     <string name="first_pairing_not_verified">Erste Kopplung nicht durch Hardware verifiziert</string>
     <string name="flagged_for_review">Zur Überprüfung markiert: %s\n</string>
+    <string name="enable_remote_verify_link_confirm">Dieser Link fordert Auditor auf, regelmäßig Prüfungen von diesem Smartphone an ein Konto auf attestation.diamaneos.de zu senden. Fahre nur fort, wenn du in deinem eigenen Konto auf „Add this phone“ getippt hast.</string>
 </resources>

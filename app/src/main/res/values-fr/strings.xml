@@ -5,4 +5,5 @@
     <string name="pair">Associer</string>
     <string name="first_pairing_not_verified">Première association non vérifiée par le matériel</string>
     <string name="flagged_for_review">Signalé pour vérification : %s\n</string>
+    <string name="enable_remote_verify_link_confirm">Ce lien demande à Auditor d\'envoyer régulièrement des vérifications de ce téléphone à un compte sur attestation.diamaneos.de. Ne continuez que si vous avez appuyé sur « Add this phone » dans votre propre compte.</string>
 </resources>

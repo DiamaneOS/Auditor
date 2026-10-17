@@ -71,6 +71,13 @@ public class AttestationActivity extends AppCompatActivity {
 
     private static final int PERMISSIONS_REQUEST_CAMERA = 0;
     private static final int PERMISSIONS_REQUEST_POST_NOTIFICATIONS_REMOTE_VERIFY = 1;
+    private static final int PERMISSIONS_REQUEST_POST_NOTIFICATIONS_LINK = 2;
+
+    // DiamaneOS: remote enrollment from the account page and from the Setup Wizard
+    static final String ACTION_ADD_THIS_PHONE = "de.diamaneos.auditor.action.ADD_THIS_PHONE";
+    private static final String ENROLL_SCHEME = "diamaneos-auditor";
+    private static final String ENROLL_HOST = "enroll";
+    private static final String ADD_THIS_PHONE_URL = "https://" + RemoteVerifyJob.DOMAIN + "/#add-this-phone";
 
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
 
@@ -119,7 +126,7 @@ public class AttestationActivity extends AppCompatActivity {
                             handleAttestation(contentsBytes);
                         } else if (stage == Stage.EnableRemoteVerify) {
                             stage = Stage.None;
-                            enableRemoteVerify(contents);
+                            enableRemoteVerify(contents, false);
                         } else {
                             throw new RuntimeException("received unexpected scan result");
                         }
@@ -249,11 +256,32 @@ public class AttestationActivity extends AppCompatActivity {
         });
 
         RemoteVerifyJob.restore(this);
+
+        if (savedInstanceState == null) {
+            handleEnrollmentIntent(getIntent());
+        }
     }
 
-    // DiamaneOS: a device without a manufacturer-rooted chain needs the user to confirm how it
-    // was set up before its first pairing.
-    private void enableRemoteVerify(final String contents) {
+    private void handleEnrollmentIntent(final Intent intent) {
+        if (ACTION_ADD_THIS_PHONE.equals(intent.getAction())) {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(ADD_THIS_PHONE_URL))
+                    .addCategory(Intent.CATEGORY_BROWSABLE));
+            finish();
+        } else if (Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null
+                && ENROLL_SCHEME.equals(intent.getData().getScheme())
+                && ENROLL_HOST.equals(intent.getData().getHost())) {
+            final String account = intent.getData().getQueryParameter("account");
+            if (account == null) {
+                snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
+            } else {
+                enableRemoteVerify(account, true);
+            }
+        }
+    }
+
+    // Any app can send the enrollment link, so it is confirmed first. A device without a
+    // manufacturer-rooted chain also needs the user to confirm how it was set up.
+    private void enableRemoteVerify(final String contents, final boolean fromLink) {
         if (!isSupportedAuditee) {
             snackbar.setText(R.string.unsupported_auditee).show();
             return;
@@ -280,8 +308,13 @@ public class AttestationActivity extends AppCompatActivity {
             RemoteVerifyJob.schedule(this, interval);
             binding.content.remoteVerify.setVisibility(View.GONE);
             snackbar.setText(R.string.enable_remote_verify_success).show();
+            if (fromLink && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                        PERMISSIONS_REQUEST_POST_NOTIFICATIONS_LINK);
+            }
         };
-        executor.submit(() -> {
+        final Runnable checkSetup = () -> executor.submit(() -> {
             final boolean manufacturerRooted = AttestationProtocol.hasManufacturerRootedAttestation(this);
             runOnUiThread(() -> {
                 if (manufacturerRooted) {
@@ -291,6 +324,16 @@ public class AttestationActivity extends AppCompatActivity {
                 }
             });
         });
+        if (fromLink) {
+            new MaterialAlertDialogBuilder(this)
+                    .setTitle(R.string.action_enable_remote_verify)
+                    .setMessage(R.string.enable_remote_verify_link_confirm)
+                    .setPositiveButton(android.R.string.ok, (dialog, which) -> checkSetup.run())
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+        } else {
+            checkSetup.run();
+        }
     }
 
     private void confirmSetup(final Runnable pair, final Runnable cancel) {

@@ -142,4 +142,5 @@
     <string name="pair">Pair</string>
     <string name="first_pairing_not_verified">First pairing not verified by hardware</string>
     <string name="flagged_for_review">Flagged for review: %s\n</string>
+    <string name="enable_remote_verify_link_confirm">This link asks Auditor to send regular checks from this phone to an account on attestation.diamaneos.de. Only continue if you tapped Add this phone in your own account.</string>
 </resources>
