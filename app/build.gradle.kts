@@ -45,7 +45,7 @@ android {
     namespace = "app.attestation.auditor"
 
     defaultConfig {
-        applicationId = "app.attestation.auditor"
+        applicationId = "de.diamaneos.auditor"
         minSdk = 33
         targetSdk = 36
         versionCode = 92
