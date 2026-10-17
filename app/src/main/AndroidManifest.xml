@@ -22,6 +22,7 @@
             android:memtagMode="async">
 
         <activity android:name=".AttestationActivity"
+                android:launchMode="singleTop"
                 android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

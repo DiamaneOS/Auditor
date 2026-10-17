@@ -271,6 +271,14 @@ public class AttestationActivity extends AppCompatActivity {
         }
     }
 
+    // an open Auditor receives a later link here instead of in onCreate
+    @Override
+    protected void onNewIntent(@NonNull final Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleEnrollmentIntent(intent);
+    }
+
     private void handleEnrollmentIntent(final Intent intent) {
         if (ACTION_ADD_THIS_PHONE.equals(intent.getAction())) {
             startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(ADD_THIS_PHONE_URL))
