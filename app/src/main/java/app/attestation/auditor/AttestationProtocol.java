@@ -227,12 +227,14 @@ class AttestationProtocol {
             OS_ENFORCED_FLAGS_OEM_UNLOCK_ALLOWED |
             OS_ENFORCED_FLAGS_SYSTEM_USER;
 
-    private static final String AUDITOR_APP_PACKAGE_NAME_RELEASE = "app.attestation.auditor";
+    // DiamaneOS: our release builds use their own package, GrapheneOS's keep theirs
+    private static final String AUDITOR_APP_PACKAGE_NAME_RELEASE = "de.diamaneos.auditor";
+    private static final String AUDITOR_APP_PACKAGE_NAME_RELEASE_GRAPHENEOS = "app.attestation.auditor";
     private static final String AUDITOR_APP_PACKAGE_NAME_PLAY = "app.attestation.auditor.play";
     private static final String AUDITOR_APP_PACKAGE_NAME_DEBUG = "app.attestation.auditor.debug";
-    // DiamaneOS: SHA-256 of the DiamaneOS Auditor signing certificate. An empty value matches
-    // nothing, so it rejects every release Auditee signed with that key.
-    private static final String AUDITOR_APP_SIGNATURE_DIGEST_RELEASE = "";
+    // DiamaneOS: SHA-256 of the DiamaneOS Auditor signing certificate
+    private static final String AUDITOR_APP_SIGNATURE_DIGEST_RELEASE =
+            "427BFD360586B829475F37ABFFD2548D93DB3618E45C994DE416469EF04BC2EC";
     private static final String AUDITOR_APP_SIGNATURE_DIGEST_PLAY =
             "075335BD7B54C965222B5284D2A1FDEF1198AE45EC7B09A4934287A0E3A243C7";
     private static final String AUDITOR_APP_SIGNATURE_DIGEST_DEBUG =
@@ -569,13 +571,15 @@ class AttestationProtocol {
         final byte appVariant;
         final String packageName = info.packageName;
         if (AUDITOR_APP_PACKAGE_NAME_RELEASE.equals(packageName)) {
-            if (AUDITOR_APP_SIGNATURE_DIGEST_RELEASE.equals(signatureDigest)) {
-                appVariant = AUDITOR_APP_VARIANT_RELEASE;
-            } else if (AUDITOR_APP_SIGNATURE_DIGEST_RELEASE_GRAPHENEOS.equals(signatureDigest)) {
-                appVariant = AUDITOR_APP_VARIANT_RELEASE_GRAPHENEOS;
-            } else {
+            if (!AUDITOR_APP_SIGNATURE_DIGEST_RELEASE.equals(signatureDigest)) {
                 throw new GeneralSecurityException("invalid Auditor app signing key");
             }
+            appVariant = AUDITOR_APP_VARIANT_RELEASE;
+        } else if (AUDITOR_APP_PACKAGE_NAME_RELEASE_GRAPHENEOS.equals(packageName)) {
+            if (!AUDITOR_APP_SIGNATURE_DIGEST_RELEASE_GRAPHENEOS.equals(signatureDigest)) {
+                throw new GeneralSecurityException("invalid Auditor app signing key");
+            }
+            appVariant = AUDITOR_APP_VARIANT_RELEASE_GRAPHENEOS;
         } else if (AUDITOR_APP_PACKAGE_NAME_PLAY.equals(packageName)) {
             if (!AUDITOR_APP_SIGNATURE_DIGEST_PLAY.equals(signatureDigest)) {
                 throw new GeneralSecurityException("invalid Auditor app signing key");

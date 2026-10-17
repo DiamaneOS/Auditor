@@ -1,5 +1,5 @@
-DiamaneOS fork of [GrapheneOS Auditor](https://github.com/GrapheneOS/Auditor). The package ID stays
-`app.attestation.auditor`.
+DiamaneOS fork of [GrapheneOS Auditor](https://github.com/GrapheneOS/Auditor). Release builds use the
+package ID `de.diamaneos.auditor`. The Java packages are unchanged.
 
 Differences from upstream:
 
