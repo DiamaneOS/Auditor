@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile2_confirm_title">Confirma cómo se configuró este teléfono</string>
+    <string name="profile2_confirm_text">El hardware de este teléfono no puede demostrar a Auditor que es auténtico. Cada comprobación posterior la verifica su hardware seguro con respecto a esta primera vinculación. Continúa solo si confías en cómo se configuró este teléfono. Después de restablecer los datos de fábrica, el teléfono debe vincularse de nuevo.</string>
+    <string name="pair">Vincular</string>
+    <string name="first_pairing_not_verified">Primera vinculación no verificada por hardware</string>
+    <string name="flagged_for_review">Marcado para revisión: %s\n</string>
+</resources>

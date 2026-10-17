@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile2_confirm_title">Confirmer la configuration de ce téléphone</string>
+    <string name="profile2_confirm_text">Le matériel de ce téléphone ne peut pas prouver à Auditor qu\'il est authentique. Chaque vérification ultérieure est validée par son matériel sécurisé par rapport à cette première association. Ne continuez que si vous faites confiance à la façon dont ce téléphone a été configuré. Après une réinitialisation des données d\'usine, le téléphone doit être associé à nouveau.</string>
+    <string name="pair">Associer</string>
+    <string name="first_pairing_not_verified">Première association non vérifiée par le matériel</string>
+    <string name="flagged_for_review">Signalé pour vérification : %s\n</string>
+</resources>

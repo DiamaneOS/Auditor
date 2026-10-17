@@ -135,4 +135,11 @@
     <string name="os_stock">Stock</string>
     <string name="os_graphene">GrapheneOS</string>
     <string name="os_diamaneos">DiamaneOS</string>
+
+    <!-- DiamaneOS -->
+    <string name="profile2_confirm_title">Confirm how this phone was set up</string>
+    <string name="profile2_confirm_text">This phone\'s hardware cannot prove to Auditor that it is genuine. Every later check is verified by its secure hardware against this first pairing. Only continue if you trust how this phone was set up. After a factory reset, the phone must be paired again.</string>
+    <string name="pair">Pair</string>
+    <string name="first_pairing_not_verified">First pairing not verified by hardware</string>
+    <string name="flagged_for_review">Flagged for review: %s\n</string>
 </resources>

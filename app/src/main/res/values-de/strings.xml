@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="profile2_confirm_title">Einrichtung dieses Smartphones bestätigen</string>
+    <string name="profile2_confirm_text">Die Hardware dieses Smartphones kann Auditor nicht beweisen, dass es echt ist. Jede spätere Prüfung wird von seiner sicheren Hardware anhand dieser ersten Kopplung verifiziert. Fahre nur fort, wenn du der Einrichtung dieses Smartphones vertraust. Nach dem Zurücksetzen auf die Werkseinstellungen muss das Smartphone neu gekoppelt werden.</string>
+    <string name="pair">Koppeln</string>
+    <string name="first_pairing_not_verified">Erste Kopplung nicht durch Hardware verifiziert</string>
+    <string name="flagged_for_review">Zur Überprüfung markiert: %s\n</string>
+</resources>

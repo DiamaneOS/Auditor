@@ -13,6 +13,7 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.text.Html;
 import android.text.Spanned;
 import android.util.Log;
@@ -63,6 +64,7 @@ public class AttestationActivity extends AppCompatActivity {
     private static final String STATE_AUDITEE_PAIRING = "auditee_pairing";
     private static final String STATE_AUDITEE_SERIALIZED_ATTESTATION = "auditee_serialized_attestation";
     private static final String STATE_AUDITOR_CHALLENGE = "auditor_challenge";
+    private static final String STATE_AUDITOR_CHALLENGE_TIME = "auditor_challenge_time";
     private static final String STATE_STAGE = "stage";
     private static final String STATE_OUTPUT = "output";
     private static final String STATE_BACKGROUND_RESOURCE = "background_resource";
@@ -89,6 +91,7 @@ public class AttestationActivity extends AppCompatActivity {
     private boolean auditeePairing;
     private byte[] auditeeSerializedAttestation;
     private byte[] auditorChallenge;
+    private long auditorChallengeTime;
     private int backgroundResource;
 
     final ActivityResultLauncher<Intent> QRScannerActivityLauncher = registerForActivityResult(
@@ -116,26 +119,7 @@ public class AttestationActivity extends AppCompatActivity {
                             handleAttestation(contentsBytes);
                         } else if (stage == Stage.EnableRemoteVerify) {
                             stage = Stage.None;
-                            final String[] values = contents.split(" ");
-                            if (values.length < 4 || !RemoteVerifyJob.DOMAIN.equals(values[0])) {
-                                snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
-                                return;
-                            }
-                            final long userId;
-                            final int interval;
-                            try {
-                                userId = Long.parseLong(values[1]);
-                                interval = Integer.parseInt(values[3]);
-                            } catch (final NumberFormatException e) {
-                                snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
-                                return;
-                            }
-                            PreferenceManager.getDefaultSharedPreferences(this).edit()
-                                    .putLong(RemoteVerifyJob.KEY_USER_ID, userId)
-                                    .putString(RemoteVerifyJob.KEY_SUBSCRIBE_KEY, values[2])
-                                    .apply();
-                            RemoteVerifyJob.schedule(this, interval);
-                            snackbar.setText(R.string.enable_remote_verify_success).show();
+                            enableRemoteVerify(contents);
                         } else {
                             throw new RuntimeException("received unexpected scan result");
                         }
@@ -222,6 +206,7 @@ public class AttestationActivity extends AppCompatActivity {
             auditeePairing = savedInstanceState.getBoolean(STATE_AUDITEE_PAIRING);
             auditeeSerializedAttestation = savedInstanceState.getByteArray(STATE_AUDITEE_SERIALIZED_ATTESTATION);
             auditorChallenge = savedInstanceState.getByteArray(STATE_AUDITOR_CHALLENGE);
+            auditorChallengeTime = savedInstanceState.getLong(STATE_AUDITOR_CHALLENGE_TIME);
             stage = Stage.valueOf(savedInstanceState.getString(STATE_STAGE));
             binding.content.textview.setText(Html.fromHtml(savedInstanceState.getString(STATE_OUTPUT),
                     Html.FROM_HTML_MODE_LEGACY));
@@ -266,6 +251,62 @@ public class AttestationActivity extends AppCompatActivity {
         RemoteVerifyJob.restore(this);
     }
 
+    // DiamaneOS: a device without a manufacturer-rooted chain needs the user to confirm how it
+    // was set up before its first pairing.
+    private void enableRemoteVerify(final String contents) {
+        if (!isSupportedAuditee) {
+            snackbar.setText(R.string.unsupported_auditee).show();
+            return;
+        }
+        final String[] values = contents.split(" ");
+        if (values.length < 4 || !RemoteVerifyJob.DOMAIN.equals(values[0])) {
+            snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
+            return;
+        }
+        final long userId;
+        final int interval;
+        try {
+            userId = Long.parseLong(values[1]);
+            interval = Integer.parseInt(values[3]);
+        } catch (final NumberFormatException e) {
+            snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
+            return;
+        }
+        final Runnable enable = () -> {
+            PreferenceManager.getDefaultSharedPreferences(this).edit()
+                    .putLong(RemoteVerifyJob.KEY_USER_ID, userId)
+                    .putString(RemoteVerifyJob.KEY_SUBSCRIBE_KEY, values[2])
+                    .apply();
+            RemoteVerifyJob.schedule(this, interval);
+            binding.content.remoteVerify.setVisibility(View.GONE);
+            snackbar.setText(R.string.enable_remote_verify_success).show();
+        };
+        executor.submit(() -> {
+            final boolean manufacturerRooted = AttestationProtocol.hasManufacturerRootedAttestation(this);
+            runOnUiThread(() -> {
+                if (manufacturerRooted) {
+                    enable.run();
+                } else {
+                    confirmSetup(enable, null);
+                }
+            });
+        });
+    }
+
+    private void confirmSetup(final Runnable pair, final Runnable cancel) {
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.profile2_confirm_title)
+                .setMessage(R.string.profile2_confirm_text)
+                .setPositiveButton(R.string.pair, (dialog, which) -> pair.run())
+                .setNegativeButton(android.R.string.cancel, (dialog, which) -> {
+                    if (cancel != null) {
+                        cancel.run();
+                    }
+                })
+                .setCancelable(false)
+                .show();
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -291,6 +332,7 @@ public class AttestationActivity extends AppCompatActivity {
         savedInstanceState.putBoolean(STATE_AUDITEE_PAIRING, auditeePairing);
         savedInstanceState.putByteArray(STATE_AUDITEE_SERIALIZED_ATTESTATION, auditeeSerializedAttestation);
         savedInstanceState.putByteArray(STATE_AUDITOR_CHALLENGE, auditorChallenge);
+        savedInstanceState.putLong(STATE_AUDITOR_CHALLENGE_TIME, auditorChallengeTime);
         savedInstanceState.putString(STATE_STAGE, stage.name());
         savedInstanceState.putString(STATE_OUTPUT, Html.toHtml((Spanned) binding.content.textview.getText(),
                 Html.TO_HTML_PARAGRAPH_LINES_CONSECUTIVE));
@@ -327,6 +369,7 @@ public class AttestationActivity extends AppCompatActivity {
     private void runAuditor() {
         if (auditorChallenge == null) {
             auditorChallenge = AttestationProtocol.getChallengeMessage(this);
+            auditorChallengeTime = SystemClock.elapsedRealtime();
         }
         binding.content.textview.setText(R.string.qr_code_scan_hint_auditor);
         chooseBestLayout(auditorChallenge);
@@ -334,10 +377,22 @@ public class AttestationActivity extends AppCompatActivity {
     }
 
     private void handleAttestation(final byte[] serialized) {
+        handleAttestation(serialized, SystemClock.elapsedRealtime() - auditorChallengeTime, false);
+    }
+
+    private void handleAttestation(final byte[] serialized, final long challengeAgeMs,
+            final boolean profile2Confirmed) {
         binding.content.textview.setText(R.string.verifying_attestation);
         executor.submit(() -> {
             try {
-                final AttestationProtocol.VerificationResult result = AttestationProtocol.verifySerialized(this, serialized, auditorChallenge);
+                final AttestationProtocol.VerificationResult result = AttestationProtocol.verifySerialized(
+                        this, serialized, auditorChallenge, challengeAgeMs, profile2Confirmed);
+                if (result.needsConfirmation()) {
+                    runOnUiThread(() -> confirmSetup(
+                            () -> handleAttestation(serialized, challengeAgeMs, true),
+                            () -> getOnBackPressedDispatcher().onBackPressed()));
+                    return;
+                }
                 runOnUiThread(() -> {
                     setBackgroundResource(result.strong() ? R.color.green : R.color.orange);
                     binding.content.textview.setText(result.strong() ? R.string.verify_strong : R.string.verify_basic);
