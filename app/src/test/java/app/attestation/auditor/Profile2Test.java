@@ -243,6 +243,8 @@ public class Profile2Test {
         final TrustConfig trust = TrustConfig.parse(new String(Files.readAllBytes(
                 Path.of("src/main/res/raw/diamaneos_trust.json")), StandardCharsets.UTF_8));
         assertEquals(64, trust.auditorReleaseSigner.length());
+        assertEquals(java.util.Set.of("0B0A4D2CD3680FF4F3993CA8A61CDA93417680F5151090154EDCD52655C7E4AB"),
+                trust.releaseListSigners.keySet());
         assertEquals(1, trust.devices.size());
         // only listed devices may fall back to a local root attest key
         assertTrue(trust.hasBuildDevice("FP6"));
