@@ -34,10 +34,16 @@ public class Profile2Test {
     private static AttestationProtocol.Verified verify(final AttestationFixture fixture,
             final boolean hasPersistentKey, final long challengeAgeMs, final ReleaseList releases)
             throws Exception {
+        return verify(fixture, hasPersistentKey, challengeAgeMs, releases, "");
+    }
+
+    private static AttestationProtocol.Verified verify(final AttestationFixture fixture,
+            final boolean hasPersistentKey, final long challengeAgeMs, final ReleaseList releases,
+            final String ownSigner) throws Exception {
         final Certificate[] chain = fixture.chain();
         return AttestationProtocol.verifyStateless(chain, fixture.challenge, hasPersistentKey,
                 NO_MANUFACTURER_ROOTS, AttestationFixture.trust(),
-                (device, evidence) -> Profile2.match(releases, device, evidence), challengeAgeMs);
+                (device, evidence) -> Profile2.match(releases, device, evidence), challengeAgeMs, ownSigner);
     }
 
     private static void rejected(final String reason, final Consumer<AttestationFixture> change)
@@ -83,6 +89,20 @@ public class Profile2Test {
     }
 
     @Test
+    public void debugAuditeeNeedsTheVerifiersOwnKey() throws Exception {
+        final AttestationFixture fixture = new AttestationFixture();
+        final ReleaseList releases = list(fixture.bootHash);
+        fixture.packageName = "de.diamaneos.auditor.debug";
+        final String own = BaseEncoding.base16().encode(fixture.signer);
+        GeneralSecurityException e = assertThrows(GeneralSecurityException.class,
+                () -> verify(fixture, false, 1000, releases, ""));
+        assertTrue(e.getMessage(), e.getMessage().contains("signing key"));
+        // a debug Auditee passes the signer check but never pairs without a manufacturer root
+        e = assertThrows(GeneralSecurityException.class, () -> verify(fixture, false, 1000, releases, own));
+        assertTrue(e.getMessage(), e.getMessage().contains("requires the DiamaneOS Auditor"));
+    }
+
+    @Test
     public void staleOrReplayedChallengeRejected() throws Exception {
         final AttestationFixture fixture = new AttestationFixture();
         final ReleaseList releases = list(fixture.bootHash);
@@ -92,7 +112,7 @@ public class Profile2Test {
         assertThrows(GeneralSecurityException.class, () -> AttestationProtocol.verifyStateless(chain,
                 AttestationFixture.sha256("expected challenge"), false, NO_MANUFACTURER_ROOTS,
                 AttestationFixture.trust(), (device, evidence) -> Profile2.match(releases, device, evidence),
-                1000));
+                1000, ""));
     }
 
     @Test
@@ -149,11 +169,84 @@ public class Profile2Test {
     }
 
     @Test
+    public void releaseListNestingLimited() throws Exception {
+        final byte[] deep = ("{\"a\":" + "[".repeat(100000) + "]".repeat(100000) + "}")
+                .getBytes(StandardCharsets.UTF_8);
+        assertThrows(GeneralSecurityException.class,
+                () -> ReleaseList.parse(deep, AttestationFixture.trust().releaseListSigners));
+        ReleaseList.checkDepth("{\"a\":\"[[[[[[[[[[[[\"}".getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static final class FakeStorage implements ReleaseListStore.Storage {
+        byte[] list;
+        long fetched;
+        long sequence;
+
+        @Override
+        public byte[] list() {
+            return list;
+        }
+
+        @Override
+        public long fetched() {
+            return fetched;
+        }
+
+        @Override
+        public long sequence() {
+            return sequence;
+        }
+
+        @Override
+        public void store(final byte[] newList, final long newSequence, final long time) {
+            list = newList;
+            sequence = newSequence;
+            fetched = time;
+        }
+    }
+
+    @Test
+    public void releaseListRefreshesAndExpiresOffline() throws Exception {
+        final java.util.Map<String, java.security.PublicKey> signers = AttestationFixture.trust().releaseListSigners;
+        final byte[] build1 = AttestationFixture.sha256("release 1");
+        final byte[] build2 = AttestationFixture.sha256("release 2");
+        final String key = BaseEncoding.base16().encode(AttestationFixture.AVB_KEY);
+        final FakeStorage storage = new FakeStorage();
+        final long day = 24L * 60 * 60 * 1000;
+
+        final byte[] list1 = AttestationFixture.releaseList(AttestationFixture.LIST_SIGNER, 1,
+                AttestationFixture.release(build1, 202610));
+        final byte[] list2 = AttestationFixture.releaseList(AttestationFixture.LIST_SIGNER, 2,
+                AttestationFixture.release(build2, 202611));
+        final byte[] untrusted = AttestationFixture.releaseList(AttestationFixture.keyPair(), 3,
+                AttestationFixture.release(build1, 202610));
+
+        // a fetch always wins, so a withdrawn build stops passing
+        ReleaseListStore.load(() -> list1, storage, signers, 10 * day);
+        final ReleaseList withdrawn = ReleaseListStore.load(() -> list2, storage, signers, 11 * day);
+        assertNull(withdrawn.find("FP6", key, BaseEncoding.base16().encode(build1)));
+        assertEquals(2, storage.sequence);
+
+        final ReleaseListStore.Network offline = () -> {
+            throw new java.io.IOException("offline");
+        };
+        assertEquals(2, ReleaseListStore.load(offline, storage, signers, 12 * day).sequence);
+        assertThrows(GeneralSecurityException.class, () -> ReleaseListStore.load(offline, storage, signers,
+                11 * day + ReleaseListStore.MAX_OFFLINE_AGE_MS + 1));
+        assertThrows(GeneralSecurityException.class, () -> ReleaseListStore.load(() -> list1, storage, signers, 12 * day));
+        assertThrows(GeneralSecurityException.class, () -> ReleaseListStore.load(() -> untrusted, storage, signers, 12 * day));
+        assertEquals(2, storage.sequence);
+    }
+
+    @Test
     public void productionTrustConfig() throws Exception {
         final TrustConfig trust = TrustConfig.parse(new String(Files.readAllBytes(
                 Path.of("src/main/res/raw/diamaneos_trust.json")), StandardCharsets.UTF_8));
         assertEquals(64, trust.auditorReleaseSigner.length());
         assertEquals(1, trust.devices.size());
+        // only listed devices may fall back to a local root attest key
+        assertTrue(trust.hasBuildDevice("FP6"));
+        assertTrue(!trust.hasBuildDevice("tokay"));
         assertThrows(GeneralSecurityException.class, () -> TrustConfig.parse("{\"format\":\"other\",\"version\":1}"));
     }
 }

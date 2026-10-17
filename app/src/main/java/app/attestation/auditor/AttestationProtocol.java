@@ -235,12 +235,12 @@ class AttestationProtocol {
     // DiamaneOS: our release builds use their own package, GrapheneOS's keep theirs
     private static final String AUDITOR_APP_PACKAGE_NAME_RELEASE = "de.diamaneos.auditor";
     private static final String AUDITOR_APP_PACKAGE_NAME_RELEASE_GRAPHENEOS = "app.attestation.auditor";
+    // GrapheneOS's Play Store build, still a trusted Auditee
     private static final String AUDITOR_APP_PACKAGE_NAME_PLAY = "app.attestation.auditor.play";
-    private static final String AUDITOR_APP_PACKAGE_NAME_DEBUG = "app.attestation.auditor.debug";
+    // DiamaneOS: our debug builds, trusted only by a debug build with the same signing key
+    private static final String AUDITOR_APP_PACKAGE_NAME_DEBUG = "de.diamaneos.auditor.debug";
     private static final String AUDITOR_APP_SIGNATURE_DIGEST_PLAY =
             "075335BD7B54C965222B5284D2A1FDEF1198AE45EC7B09A4934287A0E3A243C7";
-    private static final String AUDITOR_APP_SIGNATURE_DIGEST_DEBUG =
-            "17727D8B61D55A864936B1A7B4A2554A15151F32EBCF44CDAA6E6C3258231890";
     private static final byte AUDITOR_APP_VARIANT_RELEASE = 0;
     private static final byte AUDITOR_APP_VARIANT_PLAY = 1;
     private static final byte AUDITOR_APP_VARIANT_DEBUG = 2;
@@ -490,6 +490,18 @@ class AttestationProtocol {
 
     private static TrustConfig trustConfig;
 
+    private static String signingDigest(final Context context) throws GeneralSecurityException {
+        try {
+            final android.content.pm.Signature[] signers = context.getPackageManager()
+                    .getPackageInfo(context.getPackageName(), PackageManager.PackageInfoFlags.of(
+                            PackageManager.GET_SIGNING_CERTIFICATES))
+                    .signingInfo.getApkContentsSigners();
+            return BaseEncoding.base16().encode(FINGERPRINT_HASH_FUNCTION.hashBytes(signers[0].toByteArray()).asBytes());
+        } catch (final PackageManager.NameNotFoundException e) {
+            throw new GeneralSecurityException(e);
+        }
+    }
+
     static synchronized TrustConfig getTrustConfig(final Context context) throws GeneralSecurityException {
         if (trustConfig == null) {
             trustConfig = TrustConfig.parse(new String(readRawResource(context, R.raw.diamaneos_trust),
@@ -533,8 +545,8 @@ class AttestationProtocol {
 
     static Verified verifyStateless(final Certificate[] certificates,
             final byte[] challenge, final boolean hasPersistentKey, final byte[][] validRoots,
-            final TrustConfig trust, final Profile2.ReleaseLookup releases, final long challengeAgeMs)
-            throws GeneralSecurityException {
+            final TrustConfig trust, final Profile2.ReleaseLookup releases, final long challengeAgeMs,
+            final String ownSigner) throws GeneralSecurityException {
 
         verifyCertificateSignatures(certificates, hasPersistentKey);
 
@@ -606,7 +618,7 @@ class AttestationProtocol {
             if (!BuildConfig.DEBUG) {
                 throw new GeneralSecurityException("Auditor debug builds are only trusted by other Auditor debug builds");
             }
-            if (!AUDITOR_APP_SIGNATURE_DIGEST_DEBUG.equals(signatureDigest)) {
+            if (ownSigner.isEmpty() || !ownSigner.equals(signatureDigest)) {
                 throw new GeneralSecurityException("invalid Auditor app signing key");
             }
             appVariant = AUDITOR_APP_VARIANT_DEBUG;
@@ -998,7 +1010,7 @@ class AttestationProtocol {
                     readRawResource(context, R.raw.google_root_3),
                     readRawResource(context, R.raw.google_root_4),
                 }, trust, (device, evidence) -> ReleaseListStore.find(context, trust, device, evidence),
-                challengeAgeMs);
+                challengeAgeMs, BuildConfig.DEBUG ? signingDigest(context) : "");
         final boolean profile2 = verified.profile2Device != null;
 
         final StringBuilder teeEnforced = new StringBuilder();
@@ -1444,6 +1456,13 @@ class AttestationProtocol {
                 useStrongBox, challenge, false).setAttestKeyAlias(rootAlias).build());
     }
 
+    // Only devices listed for trust profile 2 fall back, so a temporary lack of attestation keys
+    // elsewhere keeps its original error.
+    private static boolean useLocalRootAttestKey(final Context context, final Throwable e)
+            throws GeneralSecurityException {
+        return isAttestationKeysUnavailable(e) && getTrustConfig(context).hasBuildDevice(Build.DEVICE);
+    }
+
     private static boolean isAttestationKeysUnavailable(final Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
             if (t instanceof android.security.KeyStoreException k && k.getNumericErrorCode()
@@ -1573,7 +1592,7 @@ class AttestationProtocol {
                 try {
                     generateAttestKey(attestKeystoreAlias, challenge, useStrongBox);
                 } catch (final IOException e) {
-                    if (!isAttestationKeysUnavailable(e)) {
+                    if (!useLocalRootAttestKey(context, e)) {
                         throw e;
                     }
                     generateLocalRootAttestKeys(attestRootKeystoreAlias, attestKeystoreAlias,
@@ -1588,7 +1607,7 @@ class AttestationProtocol {
                     hasPersistentKey).setAttestKeyAlias(useAttestKey ? attestKeystoreAlias : null).build());
         } catch (final IOException e) {
             // DiamaneOS: devices without attestation keys that do not declare attest key support
-            if (hasPersistentKey || useAttestKey || !isAttestationKeysUnavailable(e)) {
+            if (hasPersistentKey || useAttestKey || !useLocalRootAttestKey(context, e)) {
                 throw e;
             }
             generateLocalRootAttestKeys(attestRootKeystoreAlias, attestKeystoreAlias, challenge,
@@ -1848,6 +1867,22 @@ class AttestationProtocol {
             final String alias = aliases.nextElement();
             if (alias.startsWith(KEYSTORE_ALIAS_ATTEST_PREFIX) || alias.startsWith(KEYSTORE_ALIAS_PERSISTENT_PREFIX)
                     || alias.startsWith(KEYSTORE_ALIAS_ATTEST_ROOT_PREFIX)) {
+                deleteKey(keyStore, alias);
+            }
+        }
+    }
+
+    // DiamaneOS: removes every remote pairing key, before remote verification is enabled again
+    static void clearAuditee(final String statePrefix) throws GeneralSecurityException, IOException {
+        final KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
+        keyStore.load(null);
+
+        final Enumeration<String> aliases = keyStore.aliases();
+        while (aliases.hasMoreElements()) {
+            final String alias = aliases.nextElement();
+            if (alias.startsWith(statePrefix + KEYSTORE_ALIAS_ATTEST_PREFIX)
+                    || alias.startsWith(statePrefix + KEYSTORE_ALIAS_PERSISTENT_PREFIX)
+                    || alias.startsWith(statePrefix + KEYSTORE_ALIAS_ATTEST_ROOT_PREFIX)) {
                 deleteKey(keyStore, alias);
             }
         }

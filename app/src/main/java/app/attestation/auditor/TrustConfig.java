@@ -28,7 +28,9 @@ final class TrustConfig {
     static final String FORMAT = "diamaneos-attestation-trust";
     private static final Pattern SHA256_HEX = Pattern.compile("[0-9A-F]{64}");
 
-    record Device(String id, String name, String osName, String verifiedBootKey, int securityLevel) {}
+    // buildDevice is the device's Build.DEVICE, for choosing the profile 2 key setup on the Auditee
+    record Device(String id, String buildDevice, String name, String osName, String verifiedBootKey,
+            int securityLevel) {}
 
     final String auditorReleaseSigner;
     final ImmutableMap<String, PublicKey> releaseListSigners;
@@ -68,8 +70,8 @@ final class TrustConfig {
                 if (!SHA256_HEX.matcher(verifiedBootKey).matches()) {
                     throw new GeneralSecurityException("invalid verified boot key");
                 }
-                devices.add(new Device(device.getString("id"), device.getString("name"),
-                        device.getString("osName"), verifiedBootKey,
+                devices.add(new Device(device.getString("id"), device.getString("buildDevice"),
+                        device.getString("name"), device.getString("osName"), verifiedBootKey,
                         securityLevel(device.getString("securityLevel"))));
             }
             return new TrustConfig(signer, signers.buildOrThrow(), devices.build());
@@ -82,6 +84,10 @@ final class TrustConfig {
         return devices.stream()
                 .filter(d -> d.verifiedBootKey.equals(verifiedBootKey) && d.securityLevel == securityLevel)
                 .collect(ImmutableList.toImmutableList());
+    }
+
+    boolean hasBuildDevice(final String buildDevice) {
+        return devices.stream().anyMatch(d -> d.buildDevice.equals(buildDevice));
     }
 
     static String keyId(final PublicKey key) {

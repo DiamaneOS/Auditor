@@ -102,7 +102,7 @@ final class AttestationFixture {
                         List.of(new AttestationApplicationId.AttestationPackageInfo(packageName, appVersion)),
                         List.of(signer)))
                 .build();
-        return (DERSequence) new DERSequence(ParsedAttestationRecord.create(attestationVersion, level,
+        return new DERSequence(ParsedAttestationRecord.create(attestationVersion, level,
                 keyMintVersion, level, keyChallenge, new byte[0], software, tee, leaf.getPublic())
                 .toAsn1Sequence().toArray());
     }
@@ -147,6 +147,7 @@ final class AttestationFixture {
                         Base64.getEncoder().encodeToString(LIST_SIGNER.getPublic().getEncoded())))
                 .put("devices", new JSONArray().put(new JSONObject()
                         .put("id", "FP6")
+                        .put("buildDevice", "FP6")
                         .put("name", "Fairphone 6")
                         .put("osName", "DiamaneOS")
                         .put("verifiedBootKey", BaseEncoding.base16().encode(AVB_KEY))

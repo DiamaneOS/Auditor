@@ -6,6 +6,7 @@ import static android.graphics.Color.WHITE;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -33,6 +34,9 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
+import androidx.lifecycle.MutableLiveData;
+import androidx.lifecycle.ViewModel;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.preference.PreferenceManager;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
@@ -99,6 +103,7 @@ public class AttestationActivity extends AppCompatActivity {
     private byte[] auditeeSerializedAttestation;
     private byte[] auditorChallenge;
     private long auditorChallengeTime;
+    private VerificationState verification;
     private int backgroundResource;
 
     final ActivityResultLauncher<Intent> QRScannerActivityLauncher = registerForActivityResult(
@@ -243,6 +248,7 @@ public class AttestationActivity extends AppCompatActivity {
             public void handleOnBackPressed() {
                 if (stage == Stage.AuditeeResults || stage == Stage.Auditor ||
                         stage == Stage.Result) {
+                    verification.outcome.setValue(null);
                     auditeeSerializedAttestation = null;
                     auditorChallenge = null;
                     stage = Stage.None;
@@ -256,6 +262,9 @@ public class AttestationActivity extends AppCompatActivity {
         });
 
         RemoteVerifyJob.restore(this);
+
+        verification = new ViewModelProvider(this).get(VerificationState.class);
+        verification.outcome.observe(this, this::showOutcome);
 
         if (savedInstanceState == null) {
             handleEnrollmentIntent(getIntent());
@@ -286,6 +295,14 @@ public class AttestationActivity extends AppCompatActivity {
             snackbar.setText(R.string.unsupported_auditee).show();
             return;
         }
+        // as upstream hides the button, the account can only change after disabling
+        if (RemoteVerifyJob.isEnabled(this)) {
+            new MaterialAlertDialogBuilder(this)
+                    .setMessage(R.string.remote_verify_already_enabled)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
+            return;
+        }
         final String[] values = contents.split(" ");
         if (values.length < 4 || !RemoteVerifyJob.DOMAIN.equals(values[0])) {
             snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
@@ -314,9 +331,18 @@ public class AttestationActivity extends AppCompatActivity {
                         PERMISSIONS_REQUEST_POST_NOTIFICATIONS_LINK);
             }
         };
+        final Context context = getApplicationContext();
         final Runnable checkSetup = () -> executor.submit(() -> {
-            final boolean manufacturerRooted = AttestationProtocol.hasManufacturerRootedAttestation(this);
+            try {
+                AttestationProtocol.clearAuditee(RemoteVerifyJob.STATE_PREFIX);
+            } catch (final GeneralSecurityException | IOException e) {
+                Log.e(TAG, "clearAuditee", e);
+            }
+            final boolean manufacturerRooted = AttestationProtocol.hasManufacturerRootedAttestation(context);
             runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
                 if (manufacturerRooted) {
                     enable.run();
                 } else {
@@ -327,7 +353,7 @@ public class AttestationActivity extends AppCompatActivity {
         if (fromLink) {
             new MaterialAlertDialogBuilder(this)
                     .setTitle(R.string.action_enable_remote_verify)
-                    .setMessage(R.string.enable_remote_verify_link_confirm)
+                    .setMessage(getString(R.string.enable_remote_verify_link_confirm, Long.toString(userId)))
                     .setPositiveButton(android.R.string.ok, (dialog, which) -> checkSetup.run())
                     .setNegativeButton(android.R.string.cancel, null)
                     .show();
@@ -426,38 +452,55 @@ public class AttestationActivity extends AppCompatActivity {
     private void handleAttestation(final byte[] serialized, final long challengeAgeMs,
             final boolean profile2Confirmed) {
         binding.content.textview.setText(R.string.verifying_attestation);
+        final MutableLiveData<Object> outcome = verification.outcome;
+        final byte[] challenge = auditorChallenge;
+        final Context context = getApplicationContext();
         executor.submit(() -> {
             try {
                 final AttestationProtocol.VerificationResult result = AttestationProtocol.verifySerialized(
-                        this, serialized, auditorChallenge, challengeAgeMs, profile2Confirmed);
-                if (result.needsConfirmation()) {
-                    runOnUiThread(() -> confirmSetup(
-                            () -> handleAttestation(serialized, challengeAgeMs, true),
-                            () -> getOnBackPressedDispatcher().onBackPressed()));
-                    return;
-                }
-                runOnUiThread(() -> {
-                    setBackgroundResource(result.strong() ? R.color.green : R.color.orange);
-                    binding.content.textview.setText(result.strong() ? R.string.verify_strong : R.string.verify_basic);
-                    binding.content.textview.append(getText(R.string.hardware_enforced));
-                    binding.content.textview.append(result.teeEnforced());
-                    binding.content.textview.append(getText(R.string.os_enforced));
-                    binding.content.textview.append(result.osEnforced());
-                    if (!result.history().isEmpty()) {
-                        binding.content.textview.append(getText(R.string.history));
-                        binding.content.textview.append(result.history());
-                    }
-                });
+                        context, serialized, challenge, challengeAgeMs, profile2Confirmed);
+                outcome.postValue(result.needsConfirmation()
+                        ? new Confirmation(serialized, challengeAgeMs) : result);
             } catch (final BufferUnderflowException | DataFormatException |
                     GeneralSecurityException | NegativeArraySizeException e) {
                 Log.e(TAG, "attestation verification error", e);
-                runOnUiThread(() -> {
-                    setBackgroundResource(R.color.red);
-                    binding.content.textview.setText(R.string.verify_error);
-                    binding.content.textview.append(e.getMessage());
-                });
+                outcome.postValue(e);
             }
         });
+    }
+
+    // DiamaneOS: results outlive a rotation, so the screen never stays on "Verifying".
+    public static class VerificationState extends ViewModel {
+        final MutableLiveData<Object> outcome = new MutableLiveData<>();
+    }
+
+    private record Confirmation(byte[] serialized, long challengeAgeMs) {}
+
+    private void showOutcome(final Object outcome) {
+        if (outcome instanceof Confirmation confirmation) {
+            confirmSetup(() -> {
+                verification.outcome.setValue(null);
+                handleAttestation(confirmation.serialized(), confirmation.challengeAgeMs(), true);
+            }, () -> {
+                verification.outcome.setValue(null);
+                getOnBackPressedDispatcher().onBackPressed();
+            });
+        } else if (outcome instanceof AttestationProtocol.VerificationResult result) {
+            setBackgroundResource(result.strong() ? R.color.green : R.color.orange);
+            binding.content.textview.setText(result.strong() ? R.string.verify_strong : R.string.verify_basic);
+            binding.content.textview.append(getText(R.string.hardware_enforced));
+            binding.content.textview.append(result.teeEnforced());
+            binding.content.textview.append(getText(R.string.os_enforced));
+            binding.content.textview.append(result.osEnforced());
+            if (!result.history().isEmpty()) {
+                binding.content.textview.append(getText(R.string.history));
+                binding.content.textview.append(result.history());
+            }
+        } else if (outcome instanceof Exception e) {
+            setBackgroundResource(R.color.red);
+            binding.content.textview.setText(R.string.verify_error);
+            binding.content.textview.append(e.getMessage());
+        }
     }
 
     private void generateAttestation(final byte[] challenge) {

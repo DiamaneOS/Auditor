@@ -14,56 +14,86 @@ import java.io.InputStream;
 import java.net.URL;
 import java.nio.file.Files;
 import java.security.GeneralSecurityException;
+import java.security.PublicKey;
+import java.util.Map;
 
 import javax.net.ssl.HttpsURLConnection;
 
 import org.grapheneos.tls.ModernTLSSocketFactory;
 
-// DiamaneOS: caches the signed release list and refreshes it when a boot hash is not on it.
+// DiamaneOS: downloads the signed release list for every check that needs it. The stored copy is
+// used only while offline and only for a limited time, so withdrawn builds stop passing.
 final class ReleaseListStore {
     private static final String TAG = "ReleaseListStore";
     static final String URL = "https://" + RemoteVerifyJob.DOMAIN + "/releases.json";
+    static final long MAX_OFFLINE_AGE_MS = 7L * 24 * 60 * 60 * 1000;
     private static final String FILE_NAME = "attestation-releases.json";
     private static final String KEY_SEQUENCE = "release_list_sequence";
+    private static final String KEY_FETCHED = "release_list_fetched";
     private static final int TIMEOUT_MS = 30000;
+
+    interface Network {
+        byte[] get() throws IOException;
+    }
+
+    interface Storage {
+        byte[] list() throws IOException;
+        long fetched();
+        long sequence();
+        void store(byte[] list, long sequence, long fetched) throws IOException;
+    }
 
     private ReleaseListStore() {}
 
     static synchronized ReleaseList.Release find(final Context context, final TrustConfig trust,
             final TrustConfig.Device device, final Profile2.Evidence evidence)
             throws GeneralSecurityException {
-        final ReleaseList cached = cached(context, trust);
-        if (cached != null && cached.find(device.id(), evidence.verifiedBootKey(),
-                evidence.verifiedBootHash()) != null) {
-            return Profile2.match(cached, device, evidence);
-        }
-        final ReleaseList fresh;
+        return Profile2.match(load(ReleaseListStore::download, new PreferenceStorage(context),
+                trust.releaseListSigners, System.currentTimeMillis()), device, evidence);
+    }
+
+    static ReleaseList load(final Network network, final Storage storage,
+            final Map<String, PublicKey> signers, final long now) throws GeneralSecurityException {
+        final byte[] fetched;
         try {
-            fresh = fetch(context, trust);
+            fetched = network.get();
         } catch (final IOException e) {
-            Log.e(TAG, "release list download failed", e);
-            throw new GeneralSecurityException("could not download the list of official releases", e);
+            Log.w(TAG, "release list download failed", e);
+            return offline(storage, signers, now, e);
         }
-        return Profile2.match(fresh, device, evidence);
-    }
-
-    private static ReleaseList cached(final Context context, final TrustConfig trust) {
-        final File file = new File(context.getFilesDir(), FILE_NAME);
-        if (!file.exists()) {
-            return null;
+        final ReleaseList list = ReleaseList.parse(fetched, signers);
+        if (list.sequence < storage.sequence()) {
+            throw new GeneralSecurityException("release list is older than the one already seen");
         }
         try {
-            return ReleaseList.parse(Files.readAllBytes(file.toPath()), trust.releaseListSigners);
-        } catch (final GeneralSecurityException | IOException e) {
-            Log.w(TAG, "ignoring cached release list", e);
-            return null;
+            storage.store(fetched, list.sequence, now);
+        } catch (final IOException e) {
+            Log.w(TAG, "could not store release list", e);
         }
+        return list;
     }
 
-    private static ReleaseList fetch(final Context context, final TrustConfig trust)
-            throws GeneralSecurityException, IOException {
+    private static ReleaseList offline(final Storage storage, final Map<String, PublicKey> signers,
+            final long now, final IOException cause) throws GeneralSecurityException {
+        final long age = now - storage.fetched();
+        byte[] cached = null;
+        try {
+            cached = storage.list();
+        } catch (final IOException e) {
+            Log.w(TAG, "could not read stored release list", e);
+        }
+        if (cached == null || age < 0 || age > MAX_OFFLINE_AGE_MS) {
+            throw new GeneralSecurityException("could not download the list of official releases", cause);
+        }
+        final ReleaseList list = ReleaseList.parse(cached, signers);
+        if (list.sequence < storage.sequence()) {
+            throw new GeneralSecurityException("stored release list is older than the one already seen");
+        }
+        return list;
+    }
+
+    private static byte[] download() throws IOException {
         final HttpsURLConnection connection = (HttpsURLConnection) new URL(URL).openConnection();
-        final byte[] envelope;
         try {
             connection.setSSLSocketFactory(new ModernTLSSocketFactory());
             connection.setConnectTimeout(TIMEOUT_MS);
@@ -80,27 +110,48 @@ final class ReleaseListStore {
                     }
                     output.write(buffer, 0, read);
                 }
-                envelope = output.toByteArray();
+                return output.toByteArray();
             }
         } finally {
             connection.disconnect();
         }
+    }
 
-        final ReleaseList list = ReleaseList.parse(envelope, trust.releaseListSigners);
-        final SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
-        if (list.sequence < preferences.getLong(KEY_SEQUENCE, 0)) {
-            throw new GeneralSecurityException("release list is older than the one already seen");
+    private record PreferenceStorage(Context context) implements Storage {
+        private SharedPreferences preferences() {
+            return PreferenceManager.getDefaultSharedPreferences(context);
         }
-        final File file = new File(context.getFilesDir(), FILE_NAME);
-        final File temporary = new File(context.getFilesDir(), FILE_NAME + ".tmp");
-        try (final FileOutputStream output = new FileOutputStream(temporary)) {
-            output.write(envelope);
-            output.getFD().sync();
+
+        private File file() {
+            return new File(context.getFilesDir(), FILE_NAME);
         }
-        if (!temporary.renameTo(file)) {
-            throw new IOException("could not store release list");
+
+        @Override
+        public byte[] list() throws IOException {
+            return file().exists() ? Files.readAllBytes(file().toPath()) : null;
         }
-        preferences.edit().putLong(KEY_SEQUENCE, list.sequence).apply();
-        return list;
+
+        @Override
+        public long fetched() {
+            return preferences().getLong(KEY_FETCHED, 0);
+        }
+
+        @Override
+        public long sequence() {
+            return preferences().getLong(KEY_SEQUENCE, 0);
+        }
+
+        @Override
+        public void store(final byte[] list, final long sequence, final long fetched) throws IOException {
+            final File temporary = new File(context.getFilesDir(), FILE_NAME + ".tmp");
+            try (final FileOutputStream output = new FileOutputStream(temporary)) {
+                output.write(list);
+                output.getFD().sync();
+            }
+            if (!temporary.renameTo(file())) {
+                throw new IOException("could not store release list");
+            }
+            preferences().edit().putLong(KEY_SEQUENCE, sequence).putLong(KEY_FETCHED, fetched).apply();
+        }
     }
 }
