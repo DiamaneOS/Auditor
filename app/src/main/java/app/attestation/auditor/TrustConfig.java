@@ -1,5 +1,7 @@
 package app.attestation.auditor;
 
+import android.content.Context;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.hash.Hashing;
@@ -9,6 +11,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.nio.charset.StandardCharsets;
 import java.security.AlgorithmParameters;
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
@@ -21,6 +24,8 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 import app.attestation.auditor.attestation.ParsedAttestationRecord;
+
+import static app.attestation.auditor.AttestationProtocol.readRawResource;
 
 // DiamaneOS: devices without a manufacturer-rooted attestation chain (trust profile 2) and the
 // keys trusted for them. Kept as data so device specifics stay out of the verification code.
@@ -42,6 +47,16 @@ final class TrustConfig {
         this.auditorReleaseSigner = auditorReleaseSigner;
         this.releaseListSigners = releaseListSigners;
         this.devices = devices;
+    }
+
+    private static TrustConfig trustConfig;
+
+    static synchronized TrustConfig get(final Context context) throws GeneralSecurityException {
+        if (trustConfig == null) {
+            trustConfig = TrustConfig.parse(new String(readRawResource(context, R.raw.diamaneos_trust),
+                    StandardCharsets.UTF_8));
+        }
+        return trustConfig;
     }
 
     static TrustConfig parse(final String json) throws GeneralSecurityException {

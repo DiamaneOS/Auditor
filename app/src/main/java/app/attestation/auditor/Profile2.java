@@ -1,5 +1,12 @@
 package app.attestation.auditor;
 
+import android.content.Context;
+import android.content.pm.PackageManager;
+import android.os.Build;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.util.Log;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.io.BaseEncoding;
 
@@ -7,14 +14,27 @@ import org.bouncycastle.asn1.ASN1Primitive;
 
 import java.io.IOException;
 import java.security.GeneralSecurityException;
+import java.security.KeyStore;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateParsingException;
 import java.security.cert.X509Certificate;
+import java.security.spec.ECGenParameterSpec;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
+import app.attestation.auditor.attestation.AuthorizationList;
+import app.attestation.auditor.attestation.ParsedAttestationRecord;
 import app.attestation.auditor.attestation.RootOfTrust;
+
+import static app.attestation.auditor.AttestationProtocol.EC_CURVE;
+import static app.attestation.auditor.AttestationProtocol.KEY_DIGEST;
+import static app.attestation.auditor.AttestationProtocol.TAG;
+import static app.attestation.auditor.AttestationProtocol.generateKeyPair;
+import static app.attestation.auditor.AttestationProtocol.generateRandomToken;
+import static app.attestation.auditor.AttestationProtocol.getCertificateChain;
+import static app.attestation.auditor.AttestationProtocol.getKeyBuilder;
+import static app.attestation.auditor.AttestationProtocol.readRawResource;
 
 // DiamaneOS: trust profile 2, for devices whose secure hardware gives no manufacturer-rooted
 // chain. The first pairing is trusted on the user's confirmation and must match an official
@@ -45,6 +65,50 @@ final class Profile2 {
                 || ((X509Certificate) chain[CHAIN_LENGTH - 1]).getExtensionValue(KEY_DESCRIPTION_OID) != null) {
             throw new GeneralSecurityException("root certificate is not a valid key attestation root");
         }
+    }
+
+    // Called from AttestationProtocol.verifyStateless when the chain has no manufacturer root.
+    static TrustConfig.Device device(final TrustConfig trust, final boolean releaseAuditor,
+            final ParsedAttestationRecord attestation, final RootOfTrust rootOfTrust,
+            final String verifiedBootKey) throws GeneralSecurityException {
+        if (!releaseAuditor) {
+            throw new GeneralSecurityException("pairing without a manufacturer root requires the DiamaneOS Auditor");
+        }
+        return device(trust, evidence(attestation, rootOfTrust, verifiedBootKey));
+    }
+
+    // Called from AttestationProtocol.verifyStateless once the attest key is known. Returns the
+    // review flags of a first pairing, and nothing for a manufacturer-rooted chain (no device).
+    static List<String> verify(final TrustConfig.Device device, final boolean attestKey,
+            final boolean hasPersistentKey, final ParsedAttestationRecord attestation,
+            final RootOfTrust rootOfTrust, final String verifiedBootKey,
+            final Certificate[] certificates, final ReleaseLookup releases, final long challengeAgeMs)
+            throws GeneralSecurityException {
+        List<String> reviewFlags = List.of();
+        if (device != null) {
+            if (!attestKey) {
+                throw new GeneralSecurityException("missing pairing attest key");
+            }
+            final Evidence evidence = evidence(attestation, rootOfTrust, verifiedBootKey);
+            releases.find(device, evidence);
+            if (!hasPersistentKey) {
+                checkFreshness(challengeAgeMs, LOCAL_CHALLENGE_LIFETIME_MS);
+                reviewFlags = reviewFlags(certificates);
+            }
+        }
+        return reviewFlags;
+    }
+
+    static Evidence evidence(final ParsedAttestationRecord attestation,
+            final RootOfTrust rootOfTrust, final String verifiedBootKey) {
+        final AuthorizationList teeEnforced = attestation.teeEnforced;
+        return new Evidence(verifiedBootKey,
+                BaseEncoding.base16().encode(rootOfTrust.verifiedBootHash.orElse(new byte[0])),
+                rootOfTrust.deviceLocked, rootOfTrust.verifiedBootState,
+                ParsedAttestationRecord.securityLevelToInt(attestation.attestationSecurityLevel),
+                teeEnforced.osVersion.orElse(0), teeEnforced.osPatchLevel.orElse(0),
+                teeEnforced.vendorPatchLevel.orElse(0), teeEnforced.bootPatchLevel.orElse(0),
+                attestation.attestationVersion, attestation.keymasterVersion);
     }
 
     static TrustConfig.Device device(final TrustConfig config, final Evidence evidence)
@@ -158,6 +222,69 @@ final class Profile2 {
         }
         final byte[] octets = org.bouncycastle.asn1.ASN1OctetString.getInstance(wrapped).getOctets();
         return Arrays.equals(octets, ASN1Primitive.fromByteArray(octets).getEncoded("DER"));
+    }
+
+    // DiamaneOS: without attestation keys (profile 2), a local root attest key without a
+    // challenge has no attestation data and only signs the pairing attest key below it.
+    static void generateLocalRootAttestKeys(final String rootAlias, final String attestAlias,
+            final byte[] challenge, final boolean useStrongBox) throws GeneralSecurityException, IOException {
+        final KeyGenParameterSpec.Builder root = new KeyGenParameterSpec.Builder(rootAlias,
+                KeyProperties.PURPOSE_ATTEST_KEY)
+                .setAlgorithmParameterSpec(new ECGenParameterSpec(EC_CURVE))
+                .setDigests(KEY_DIGEST);
+        if (useStrongBox) {
+            root.setIsStrongBoxBacked(true);
+        }
+        generateKeyPair(root.build());
+        generateKeyPair(getKeyBuilder(attestAlias, KeyProperties.PURPOSE_ATTEST_KEY,
+                useStrongBox, challenge, false).setAttestKeyAlias(rootAlias).build());
+    }
+
+    // Only devices listed for trust profile 2 fall back, so a temporary lack of attestation keys
+    // elsewhere keeps its original error.
+    static boolean useLocalRootAttestKey(final Context context, final Throwable e)
+            throws GeneralSecurityException {
+        return isAttestationKeysUnavailable(e) && TrustConfig.get(context).hasBuildDevice(Build.DEVICE);
+    }
+
+    private static boolean isAttestationKeysUnavailable(final Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof android.security.KeyStoreException k && k.getNumericErrorCode()
+                    == android.security.KeyStoreException.ERROR_ATTESTATION_KEYS_UNAVAILABLE) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // DiamaneOS: whether this device's attestation chains up to a manufacturer root. Remote
+    // enrollment asks the user to confirm the setup before a first pairing without one.
+    static boolean hasManufacturerRootedAttestation(final Context context) {
+        final String alias = "probe_attestation_key";
+        try {
+            final KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
+            keyStore.load(null);
+            final boolean strongBox = context.getPackageManager()
+                    .hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE);
+            try {
+                generateKeyPair(getKeyBuilder(alias, KeyProperties.PURPOSE_SIGN, strongBox,
+                        generateRandomToken(), true).build());
+                final Certificate[] chain = getCertificateChain(keyStore, alias);
+                final byte[] root = chain[chain.length - 1].getEncoded();
+                for (final int id : new int[]{R.raw.google_root_0, R.raw.google_root_1,
+                        R.raw.google_root_2, R.raw.google_root_3, R.raw.google_root_4}) {
+                    if (Arrays.equals(root, readRawResource(context, id))) {
+                        return true;
+                    }
+                }
+                return false;
+            } finally {
+                keyStore.deleteEntry(alias);
+            }
+        } catch (final GeneralSecurityException | IOException e) {
+            Log.w(TAG, "attestation probe failed", e);
+            return false;
+        }
     }
 
     static String hex(final byte[] bytes) {

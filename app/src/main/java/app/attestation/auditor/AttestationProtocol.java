@@ -37,7 +37,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.KeyFactory;
@@ -81,7 +80,7 @@ import static androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK;
 import static androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS;
 
 class AttestationProtocol {
-    private static final String TAG = "AttestationProtocol";
+    static final String TAG = "AttestationProtocol";
 
     // Settings.Global.ADD_USERS_WHEN_LOCKED is a private API
     private static final String ADD_USERS_WHEN_LOCKED = "add_users_when_locked";
@@ -480,15 +479,13 @@ class AttestationProtocol {
         }
     }
 
-    private static byte[] readRawResource(final Context context, final int id) {
+    static byte[] readRawResource(final Context context, final int id) {
         try (final InputStream stream = context.getResources().openRawResource(id)) {
             return ByteStreams.toByteArray(stream);
         } catch (final IOException e) {
             throw new RuntimeException(e);
         }
     }
-
-    private static TrustConfig trustConfig;
 
     private static String signingDigest(final Context context) throws GeneralSecurityException {
         try {
@@ -502,17 +499,9 @@ class AttestationProtocol {
         }
     }
 
-    static synchronized TrustConfig getTrustConfig(final Context context) throws GeneralSecurityException {
-        if (trustConfig == null) {
-            trustConfig = TrustConfig.parse(new String(readRawResource(context, R.raw.diamaneos_trust),
-                    StandardCharsets.UTF_8));
-        }
-        return trustConfig;
-    }
-
     private static final SecureRandom random = new SecureRandom();
 
-    private static byte[] generateRandomToken() {
+    static byte[] generateRandomToken() {
         final byte[] challenge = new byte[RANDOM_TOKEN_LENGTH];
         random.nextBytes(challenge);
         return challenge;
@@ -643,12 +632,9 @@ class AttestationProtocol {
         final RootOfTrust.VerifiedBootState verifiedBootState = rootOfTrust.verifiedBootState;
         final String verifiedBootKey = BaseEncoding.base16().encode(rootOfTrust.verifiedBootKey);
         final DeviceInfo device;
-        TrustConfig.Device profile2Device = null;
-        if (!manufacturerRooted) {
-            if (appVariant != AUDITOR_APP_VARIANT_RELEASE) {
-                throw new GeneralSecurityException("pairing without a manufacturer root requires the DiamaneOS Auditor");
-            }
-            profile2Device = Profile2.device(trust, profile2Evidence(attestation, rootOfTrust, verifiedBootKey));
+        final TrustConfig.Device profile2Device = manufacturerRooted ? null : Profile2.device(trust,
+                appVariant == AUDITOR_APP_VARIANT_RELEASE, attestation, rootOfTrust, verifiedBootKey);
+        if (profile2Device != null) {
             // versions are matched exactly against the release list instead
             device = new DeviceInfo(0, 0, 0, false, 0);
         } else if (verifiedBootState == RootOfTrust.VerifiedBootState.SELF_SIGNED) {
@@ -829,35 +815,13 @@ class AttestationProtocol {
             throw new GeneralSecurityException("only initial key and attest key should have attestation extension");
         }
 
-        List<String> reviewFlags = List.of();
-        if (profile2Device != null) {
-            if (!attestKey) {
-                throw new GeneralSecurityException("missing pairing attest key");
-            }
-            final Profile2.Evidence evidence = profile2Evidence(attestation, rootOfTrust, verifiedBootKey);
-            releases.find(profile2Device, evidence);
-            if (!hasPersistentKey) {
-                Profile2.checkFreshness(challengeAgeMs, Profile2.LOCAL_CHALLENGE_LIFETIME_MS);
-                reviewFlags = Profile2.reviewFlags(certificates);
-            }
-        }
+        final List<String> reviewFlags = Profile2.verify(profile2Device, attestKey, hasPersistentKey,
+                attestation, rootOfTrust, verifiedBootKey, certificates, releases, challengeAgeMs);
 
         return new Verified(device.name, verifiedBootKey, verifiedBootHash, device.osName,
                 osVersion, osPatchLevel, vendorPatchLevel, bootPatchLevel, appVersion, appVariant,
                 ParsedAttestationRecord.securityLevelToInt(attestationSecurityLevelEnum), attestKey,
                 profile2Device, reviewFlags);
-    }
-
-    private static Profile2.Evidence profile2Evidence(final ParsedAttestationRecord attestation,
-            final RootOfTrust rootOfTrust, final String verifiedBootKey) {
-        final AuthorizationList teeEnforced = attestation.teeEnforced;
-        return new Profile2.Evidence(verifiedBootKey,
-                BaseEncoding.base16().encode(rootOfTrust.verifiedBootHash.orElse(new byte[0])),
-                rootOfTrust.deviceLocked, rootOfTrust.verifiedBootState,
-                ParsedAttestationRecord.securityLevelToInt(attestation.attestationSecurityLevel),
-                teeEnforced.osVersion.orElse(0), teeEnforced.osPatchLevel.orElse(0),
-                teeEnforced.vendorPatchLevel.orElse(0), teeEnforced.bootPatchLevel.orElse(0),
-                attestation.attestationVersion, attestation.keymasterVersion);
     }
 
     // Only checks expiry beyond the initial certificate for the initial pairing since the
@@ -1002,7 +966,7 @@ class AttestationProtocol {
                     "\nIf the initial pairing was simply not completed, clear the pairing data on either the Auditee or the Auditor via the menu and try again.\n");
         }
 
-        final TrustConfig trust = getTrustConfig(context);
+        final TrustConfig trust = TrustConfig.get(context);
         final Verified verified = verifyStateless(attestationCertificates, challenge, hasPersistentKey,
                 new byte[][]{readRawResource(context, R.raw.google_root_0),
                     readRawResource(context, R.raw.google_root_1),
@@ -1440,69 +1404,6 @@ class AttestationProtocol {
                 useStrongBox, challenge, false).build());
     }
 
-    // DiamaneOS: without attestation keys (profile 2), a local root attest key without a
-    // challenge has no attestation data and only signs the pairing attest key below it.
-    private static void generateLocalRootAttestKeys(final String rootAlias, final String attestAlias,
-            final byte[] challenge, final boolean useStrongBox) throws GeneralSecurityException, IOException {
-        final KeyGenParameterSpec.Builder root = new KeyGenParameterSpec.Builder(rootAlias,
-                KeyProperties.PURPOSE_ATTEST_KEY)
-                .setAlgorithmParameterSpec(new ECGenParameterSpec(EC_CURVE))
-                .setDigests(KEY_DIGEST);
-        if (useStrongBox) {
-            root.setIsStrongBoxBacked(true);
-        }
-        generateKeyPair(root.build());
-        generateKeyPair(getKeyBuilder(attestAlias, KeyProperties.PURPOSE_ATTEST_KEY,
-                useStrongBox, challenge, false).setAttestKeyAlias(rootAlias).build());
-    }
-
-    // Only devices listed for trust profile 2 fall back, so a temporary lack of attestation keys
-    // elsewhere keeps its original error.
-    private static boolean useLocalRootAttestKey(final Context context, final Throwable e)
-            throws GeneralSecurityException {
-        return isAttestationKeysUnavailable(e) && getTrustConfig(context).hasBuildDevice(Build.DEVICE);
-    }
-
-    private static boolean isAttestationKeysUnavailable(final Throwable e) {
-        for (Throwable t = e; t != null; t = t.getCause()) {
-            if (t instanceof android.security.KeyStoreException k && k.getNumericErrorCode()
-                    == android.security.KeyStoreException.ERROR_ATTESTATION_KEYS_UNAVAILABLE) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // DiamaneOS: whether this device's attestation chains up to a manufacturer root. Remote
-    // enrollment asks the user to confirm the setup before a first pairing without one.
-    static boolean hasManufacturerRootedAttestation(final Context context) {
-        final String alias = "probe_attestation_key";
-        try {
-            final KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
-            keyStore.load(null);
-            final boolean strongBox = context.getPackageManager()
-                    .hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE);
-            try {
-                generateKeyPair(getKeyBuilder(alias, KeyProperties.PURPOSE_SIGN, strongBox,
-                        generateRandomToken(), true).build());
-                final Certificate[] chain = getCertificateChain(keyStore, alias);
-                final byte[] root = chain[chain.length - 1].getEncoded();
-                for (final int id : new int[]{R.raw.google_root_0, R.raw.google_root_1,
-                        R.raw.google_root_2, R.raw.google_root_3, R.raw.google_root_4}) {
-                    if (Arrays.equals(root, readRawResource(context, id))) {
-                        return true;
-                    }
-                }
-                return false;
-            } finally {
-                keyStore.deleteEntry(alias);
-            }
-        } catch (final GeneralSecurityException | IOException e) {
-            Log.w(TAG, "attestation probe failed", e);
-            return false;
-        }
-    }
-
     static Certificate getCertificate(final KeyStore keyStore, final String alias)
             throws GeneralSecurityException {
         final Certificate result = keyStore.getCertificate(alias);
@@ -1592,10 +1493,10 @@ class AttestationProtocol {
                 try {
                     generateAttestKey(attestKeystoreAlias, challenge, useStrongBox);
                 } catch (final IOException e) {
-                    if (!useLocalRootAttestKey(context, e)) {
+                    if (!Profile2.useLocalRootAttestKey(context, e)) {
                         throw e;
                     }
-                    generateLocalRootAttestKeys(attestRootKeystoreAlias, attestKeystoreAlias,
+                    Profile2.generateLocalRootAttestKeys(attestRootKeystoreAlias, attestKeystoreAlias,
                             challenge, useStrongBox);
                 }
             }
@@ -1607,10 +1508,10 @@ class AttestationProtocol {
                     hasPersistentKey).setAttestKeyAlias(useAttestKey ? attestKeystoreAlias : null).build());
         } catch (final IOException e) {
             // DiamaneOS: devices without attestation keys that do not declare attest key support
-            if (hasPersistentKey || useAttestKey || !useLocalRootAttestKey(context, e)) {
+            if (hasPersistentKey || useAttestKey || !Profile2.useLocalRootAttestKey(context, e)) {
                 throw e;
             }
-            generateLocalRootAttestKeys(attestRootKeystoreAlias, attestKeystoreAlias, challenge,
+            Profile2.generateLocalRootAttestKeys(attestRootKeystoreAlias, attestKeystoreAlias, challenge,
                     useStrongBox);
             useAttestKey = true;
             generateKeyPair(getKeyBuilder(attestationKeystoreAlias,

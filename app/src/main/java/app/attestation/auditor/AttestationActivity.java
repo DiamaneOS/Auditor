@@ -346,7 +346,7 @@ public class AttestationActivity extends AppCompatActivity {
             } catch (final GeneralSecurityException | IOException e) {
                 Log.e(TAG, "clearAuditee", e);
             }
-            final boolean manufacturerRooted = AttestationProtocol.hasManufacturerRootedAttestation(context);
+            final boolean manufacturerRooted = Profile2.hasManufacturerRootedAttestation(context);
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) {
                     return;
