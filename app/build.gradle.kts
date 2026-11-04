@@ -50,8 +50,8 @@ android {
         targetSdk = 36
         // DiamaneOS: upstream version x 100 + DiamaneOS revision (92.1 = 9201). Always higher than
         // upstream's own numbers and only ever rising, as pairings refuse a lower version.
-        versionCode = 9202
-        versionName = "92.2"
+        versionCode = 9203
+        versionName = "92.3"
     }
 
     buildTypes {
