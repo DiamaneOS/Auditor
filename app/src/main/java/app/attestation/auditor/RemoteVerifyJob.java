@@ -211,7 +211,7 @@ public class RemoteVerifyJob extends JobService {
                     }
                     throw new IOException("response code: " + responseCode);
                 }
-            } catch (final GeneralSecurityException | IOException | JSONException e) {
+            } catch (final GeneralSecurityException | IOException | JSONException | RuntimeException e) {
                 Log.e(TAG, "remote verify failure", e);
                 exceptionMessage = e.toString();
                 failure = true;

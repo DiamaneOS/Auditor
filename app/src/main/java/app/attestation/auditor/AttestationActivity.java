@@ -81,7 +81,9 @@ public class AttestationActivity extends AppCompatActivity {
     static final String ACTION_ADD_THIS_PHONE = "de.diamaneos.auditor.action.ADD_THIS_PHONE";
     private static final String ENROLL_SCHEME = "diamaneos-auditor";
     private static final String ENROLL_HOST = "enroll";
-    private static final String ADD_THIS_PHONE_URL = "https://" + RemoteVerifyJob.DOMAIN + "/#add-this-phone";
+    private static final String ADD_THIS_PHONE_URL = "https://" + RemoteVerifyJob.DOMAIN + "/#add-this-phone=";
+    private static final String KEY_ENROLL_CODE = "enroll_code";
+    private static final String KEY_ENROLL_CODE_TIME = "enroll_code_time";
 
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
 
@@ -280,13 +282,19 @@ public class AttestationActivity extends AppCompatActivity {
     }
 
     private void handleEnrollmentIntent(final Intent intent) {
+        if ((intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) {
+            return;
+        }
         if (ACTION_ADD_THIS_PHONE.equals(intent.getAction())) {
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(ADD_THIS_PHONE_URL))
-                    .addCategory(Intent.CATEGORY_BROWSABLE));
+            openAddThisPhonePage();
             finish();
         } else if (Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null
                 && ENROLL_SCHEME.equals(intent.getData().getScheme())
                 && ENROLL_HOST.equals(intent.getData().getHost())) {
+            if (!takeEnrollCode(intent.getData().getQueryParameter("code"))) {
+                openAddThisPhonePage();
+                return;
+            }
             final String account = intent.getData().getQueryParameter("account");
             if (account == null) {
                 snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
@@ -296,8 +304,27 @@ public class AttestationActivity extends AppCompatActivity {
         }
     }
 
-    // Any app can send the enrollment link, so it is confirmed first. A device without a
-    // manufacturer-rooted chain also needs the user to confirm how it was set up.
+    // The page asks the user to log in if needed and links back here with this code.
+    private void openAddThisPhonePage() {
+        final String code = Enrollment.newCode();
+        PreferenceManager.getDefaultSharedPreferences(this).edit()
+                .putString(KEY_ENROLL_CODE, code)
+                .putLong(KEY_ENROLL_CODE_TIME, System.currentTimeMillis())
+                .apply();
+        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(ADD_THIS_PHONE_URL + code))
+                .addCategory(Intent.CATEGORY_BROWSABLE));
+    }
+
+    private boolean takeEnrollCode(final String presented) {
+        final SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
+        final boolean accepted = Enrollment.codeAccepted(preferences.getString(KEY_ENROLL_CODE, null),
+                preferences.getLong(KEY_ENROLL_CODE_TIME, 0), presented, System.currentTimeMillis());
+        preferences.edit().remove(KEY_ENROLL_CODE).remove(KEY_ENROLL_CODE_TIME).apply();
+        return accepted;
+    }
+
+    // A link that got here carries Auditor's own code, and is still confirmed first. A device without
+    // a manufacturer-rooted chain also needs the user to confirm how it was set up.
     private void enableRemoteVerify(final String contents, final boolean fromLink) {
         if (!isSupportedAuditee) {
             snackbar.setText(R.string.unsupported_auditee).show();
@@ -311,26 +338,18 @@ public class AttestationActivity extends AppCompatActivity {
                     .show();
             return;
         }
-        final String[] values = contents.split(" ");
-        if (values.length < 4 || !RemoteVerifyJob.DOMAIN.equals(values[0])) {
+        final Enrollment.Account account = Enrollment.parseAccount(contents);
+        if (account == null) {
             snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
             return;
         }
-        final long userId;
-        final int interval;
-        try {
-            userId = Long.parseLong(values[1]);
-            interval = Integer.parseInt(values[3]);
-        } catch (final NumberFormatException e) {
-            snackbar.setText(R.string.scanned_invalid_account_qr_code).show();
-            return;
-        }
+        final long userId = account.userId();
         final Runnable enable = () -> {
             PreferenceManager.getDefaultSharedPreferences(this).edit()
                     .putLong(RemoteVerifyJob.KEY_USER_ID, userId)
-                    .putString(RemoteVerifyJob.KEY_SUBSCRIBE_KEY, values[2])
+                    .putString(RemoteVerifyJob.KEY_SUBSCRIBE_KEY, account.subscribeKey())
                     .apply();
-            RemoteVerifyJob.schedule(this, interval);
+            RemoteVerifyJob.schedule(this, account.interval());
             binding.content.remoteVerify.setVisibility(View.GONE);
             snackbar.setText(R.string.enable_remote_verify_success).show();
             if (fromLink && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
