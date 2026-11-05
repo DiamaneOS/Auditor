@@ -66,19 +66,21 @@ final class AttestationFixture {
     long appVersion = 9202;
     byte[] signer = AUDITOR_SIGNER;
     boolean rootExtension;
+    // when set, the leaf carries these bytes as its attestation extension
+    byte[] leafKeyDescription;
 
     Certificate[] chain() throws Exception {
         final byte[] attestKeyChallenge = attestChallenge != null ? attestChallenge : challenge;
         final X500Name rootName = new X500Name("CN=Android Keystore Key");
         final Certificate rootCert = certificate(root.getPublic().getEncoded(), rootName, rootName, root,
                 rootExtension ? extension(Set.of(AuthorizationList.OperationPurpose.ATTEST_KEY),
-                        attestKeyChallenge) : null, KeyUsage.keyCertSign);
+                        attestKeyChallenge).getEncoded() : null, KeyUsage.keyCertSign);
         final Certificate attestCert = certificate(attest.getPublic().getEncoded(), rootName, rootName, root,
-                extension(Set.of(AuthorizationList.OperationPurpose.ATTEST_KEY), attestKeyChallenge),
+                extension(Set.of(AuthorizationList.OperationPurpose.ATTEST_KEY), attestKeyChallenge).getEncoded(),
                 KeyUsage.keyCertSign);
         final Certificate leafCert = certificate(leaf.getPublic().getEncoded(), rootName, rootName, attest,
-                extension(Set.of(AuthorizationList.OperationPurpose.SIGN,
-                        AuthorizationList.OperationPurpose.VERIFY), challenge), KeyUsage.digitalSignature);
+                leafKeyDescription != null ? leafKeyDescription : extension(Set.of(AuthorizationList.OperationPurpose.SIGN,
+                        AuthorizationList.OperationPurpose.VERIFY), challenge).getEncoded(), KeyUsage.digitalSignature);
         return new Certificate[]{leafCert, attestCert, rootCert};
     }
 
@@ -108,7 +110,7 @@ final class AttestationFixture {
     }
 
     private static Certificate certificate(final byte[] spki, final X500Name issuer, final X500Name subject,
-            final KeyPair signerKey, final DERSequence keyDescription, final int keyUsage) throws Exception {
+            final KeyPair signerKey, final byte[] keyDescription, final int keyUsage) throws Exception {
         final AlgorithmIdentifier ecdsa = new AlgorithmIdentifier(new ASN1ObjectIdentifier("1.2.840.10045.4.3.2"));
         final V3TBSCertificateGenerator generator = new V3TBSCertificateGenerator();
         generator.setSerialNumber(new ASN1Integer(1));
@@ -122,7 +124,7 @@ final class AttestationFixture {
         extensions.add(new Extension(Extension.keyUsage, true, new KeyUsage(keyUsage).getEncoded()));
         if (keyDescription != null) {
             extensions.add(new Extension(new ASN1ObjectIdentifier(Profile2.KEY_DESCRIPTION_OID), false,
-                    new DEROctetString(keyDescription.getEncoded())));
+                    new DEROctetString(keyDescription)));
         }
         generator.setExtensions(new Extensions(extensions.toArray(new Extension[0])));
         final TBSCertificate tbs = generator.generateTBSCertificate();
