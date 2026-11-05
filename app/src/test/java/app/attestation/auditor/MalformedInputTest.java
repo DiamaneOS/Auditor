@@ -26,4 +26,14 @@ public class MalformedInputTest {
         final GeneralSecurityException e = verify(fixture);
         assertTrue(e.getMessage(), e.getMessage().contains("malformed key attestation extension"));
     }
+
+    @Test
+    public void appVersionOutOfRange() throws Exception {
+        final AttestationFixture fixture = new AttestationFixture();
+        for (final long version : new long[]{1L << 33, Long.MIN_VALUE + fixture.appVersion}) {
+            fixture.appVersion = version;
+            final GeneralSecurityException e = verify(fixture);
+            assertTrue(e.getMessage(), e.getMessage().contains("app version out of range"));
+        }
+    }
 }
