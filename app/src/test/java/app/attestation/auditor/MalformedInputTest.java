@@ -5,7 +5,14 @@ import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
+import java.io.ByteArrayOutputStream;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.GeneralSecurityException;
+import java.util.zip.Deflater;
+import java.util.zip.DeflaterOutputStream;
 
 // Input a fuzzer found. Each must be refused with an exception the Auditor shows as a failed
 // verification, never one that leaves the screen on "Verifying".
@@ -35,5 +42,22 @@ public class MalformedInputTest {
             final GeneralSecurityException e = verify(fixture);
             assertTrue(e.getMessage(), e.getMessage().contains("app version out of range"));
         }
+    }
+
+    @Test
+    public void emptyCertificateChain() throws Exception {
+        final byte[] dictionary = Files.readAllBytes(Path.of("src/main/res/raw/deflate_dictionary_5.bin"));
+        final ByteArrayOutputStream compressed = new ByteArrayOutputStream();
+        final Deflater deflater = new Deflater(Deflater.BEST_COMPRESSION, true);
+        deflater.setDictionary(dictionary);
+        try (DeflaterOutputStream stream = new DeflaterOutputStream(compressed, deflater)) {
+            stream.finish();
+        }
+        deflater.end();
+        final Method decodeChain = AttestationProtocol.class.getDeclaredMethod("decodeChain", byte[].class, byte[].class);
+        decodeChain.setAccessible(true);
+        final InvocationTargetException e = assertThrows(InvocationTargetException.class,
+                () -> decodeChain.invoke(null, dictionary, compressed.toByteArray()));
+        assertTrue(String.valueOf(e.getCause()), e.getCause() instanceof GeneralSecurityException);
     }
 }

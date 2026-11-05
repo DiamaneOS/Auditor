@@ -1283,6 +1283,9 @@ class AttestationProtocol {
             chainDeserializer.get(encoded);
             certs.add(generateCertificate(new ByteArrayInputStream(encoded)));
         }
+        if (certs.isEmpty()) {
+            throw new GeneralSecurityException("empty certificate chain");
+        }
         return certs.toArray(new Certificate[0]);
     }
 
